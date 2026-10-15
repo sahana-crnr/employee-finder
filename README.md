@@ -1,13 +1,14 @@
-# Employee Finder
+# Employee Finder AI Agent
 
-An intelligent CLI tool that gathers and extracts publicly available professional profile information for a specified company. It combines search aggregation via SerpApi with structured LLM parsing using LangChain and a local Ollama model (`llama3.2`).
+An autonomous research AI agent built with **LangChain** and **Ollama (llama3.2)**. Equipped with dynamic search tools via SerpApi, the agent autonomously decides how to search, investigates public employee profiles and leadership rosters, extracts verified personnel details, and reports its findings.
 
-## Features
+## AI Agent Capabilities
 
-- **Targeted Public Search:** Queries SerpApi across multiple search patterns (e.g., LinkedIn profiles, company directories, team pages).
+- **Autonomous Tool Calling:** Uses LangChain's agent architecture (`create_agent`) with `@tool` integrations for company employee and leadership searches.
+- **Dynamic Search Formulation:** Autonomously formulates targeted search queries for specific companies, departments, and roles.
 - **Noise Filtering:** Pre-filters irrelevant results such as job listings, reviews, salary portals, and social media.
-- **LLM-Powered Extraction:** Employs LangChain and local Ollama (`llama3.2`) to extract identifiable names, roles, and company associations in structured JSON format.
-- **Deduplication & Validation:** Cross-checks source indices, eliminates duplicate names, and formats the final verified profiles cleanly in the terminal.
+- **Grounded Verification:** Extracts verified individual names, roles, and company affiliations backed by public URLs, preventing hallucinations.
+- **Real-Time Agent Visibility:** Streams agent actions, tool calls, arguments, and observations directly in the terminal.
 
 ---
 
@@ -66,20 +67,22 @@ An intelligent CLI tool that gathers and extracts publicly available professiona
 
 ## Usage
 
-### Run the Main Extractor
+### Run the AI Agent
 ```bash
-python extract_employees.py
+python main.py
 ```
-Enter the target company name when prompted (e.g., `Anthropic`, `Stripe`, `OpenAI`).
+*(You can also run `python extract_employees.py` which calls the same agent).*
+
+Enter the target company name when prompted (e.g., `Anthropic`, `Stripe`, `OpenAI`), and optionally specify a role (e.g., `engineer`, `leadership`).
 
 ### Test Scripts
 - **Test SerpApi search:**
   ```bash
-  python test_search.py
+  python tests/test_search.py
   ```
 - **Test LangChain & Ollama connection:**
   ```bash
-  python test_langchain.py
+  python tests/test_langchain.py
   ```
 
 ---
@@ -88,13 +91,29 @@ Enter the target company name when prompted (e.g., `Anthropic`, `Stripe`, `OpenA
 
 ```text
 employee-finder/
-├── extract_employees.py  # Main script: searches, extracts, and displays profiles
-├── test_search.py        # Utility script to test SerpApi integration
-├── test_langchain.py     # Utility script to test Ollama + LangChain setup
-├── requirements.txt      # Project Python dependencies
-├── .env.example          # Sample environment variable template
-├── .gitignore            # Git ignore rules for virtual environments, secrets, and cache
-└── README.md             # Project documentation
+├── main.py                     # Primary CLI entrypoint
+├── extract_employees.py        # Entrypoint bridge
+├── requirements.txt            # Project Python dependencies
+├── .env.example                # Sample environment variable template
+├── .gitignore                  # Git ignore rules for virtual environments, secrets, and cache
+├── README.md                   # Project documentation
+│
+├── src/                        # Modular application package
+│   ├── __init__.py
+│   ├── config.py               # Environment variables, LLM initialization, constants
+│   ├── schemas.py              # Pydantic data schemas (EmployeeProfile)
+│   ├── prompts.py              # Centralized agent system prompt & guidelines
+│   ├── tools/                  # LangChain tools (@tool)
+│   │   ├── __init__.py
+│   │   └── search_tools.py     # SerpApi employee and leadership search tools
+│   └── agent/                  # LangChain Agent logic
+│       ├── __init__.py
+│       └── employee_agent.py   # Agent initialization (create_agent) and streaming runner
+│
+└── tests/                      # Test suite
+    ├── __init__.py
+    ├── test_search.py          # Direct SerpApi integration test
+    └── test_langchain.py       # Direct Ollama LLM test
 ```
 
 ---

@@ -1,4 +1,3 @@
-
 from langchain_ollama import ChatOllama
 
 llm = ChatOllama(
@@ -11,3 +10,4 @@ response = llm.invoke(
 )
 
 print(response.content)
+
