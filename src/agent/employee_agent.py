@@ -25,9 +25,8 @@ def run_agent(company: str, role_preference: Optional[str] = None):
     if role_preference:
         user_query += f" Focus especially on '{role_preference}' roles."
 
-    print("\n" + "=" * 60)
     print(f"LangChain AI Agent activated for company: {company}")
-    print("=" * 60)
+    print("-" * 60)
 
     inputs = {"messages": [("user", user_query)]}
 
@@ -49,9 +48,8 @@ def run_agent(company: str, role_preference: Optional[str] = None):
                     elif hasattr(msg, "content") and msg.content:
                         final_message = msg.content
 
-        print("\n" + "=" * 60)
-        print("📋 Final Extracted Employee Information (JSON)")
-        print("=" * 60)
+        print("Final Extracted Employee Information (JSON)")
+        print("-" * 60)
         if final_message:
             cleaned = final_message.strip()
             if cleaned.startswith("```"):

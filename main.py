@@ -2,9 +2,8 @@ import sys
 from src.agent import run_agent
 
 def main():
-    print("=" * 60)
     print("LangChain AI Employee Finder Agent")
-    print("=" * 60)
+    print("-" * 60)
 
     try:
         company = input("\nEnter company name: ").strip()
