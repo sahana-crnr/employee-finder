@@ -29,40 +29,136 @@ def create_employee_agent(llm_instance=None):
 agent = create_employee_agent()
 
 
+import re
+from urllib.parse import urlparse
+
+
+def _extract_profiles_from_text_fallback(raw_text: str, fallback_company: str) -> list[dict]:
+    """Fallback heuristic extractor that parses bullet points and text lines when LLM outputs markdown instead of JSON."""
+    profiles = []
+    lines = raw_text.splitlines()
+    for line in lines:
+        line_s = line.strip()
+        if not line_s or line_s.startswith("#") or "{" in line_s or "}" in line_s:
+            continue
+
+        # Match markdown bullets e.g. - **Name**: Role (URL) or - Name - Role - URL
+        m1 = re.search(r"[-*•]\s*\**([A-Z][a-zA-Z\.\s]+?)\**\s*(?::|[-–—]|\|)\s*([^(\n]+?)(?:\s*\((https?://[^\s)]+)\)|\s*[-–—|]\s*(https?://\S+)|$)", line_s)
+        if m1:
+            name = m1.group(1).strip()
+            role = m1.group(2).strip()
+            url = m1.group(3) or m1.group(4) or ""
+            if len(name.split()) <= 4 and not any(kw in name.lower() for kw in ("company", "leadership", "executive", "verified", "source", "http", "note")):
+                profiles.append({
+                    "name": name,
+                    "role": role,
+                    "seniority": classify_seniority(role),
+                    "source_url": url,
+                })
+                continue
+
+        # Match numbered list e.g. 1. Name - Role (URL)
+        m2 = re.search(r"^\d+\.\s*\**([A-Z][a-zA-Z\.\s]+?)\**\s*(?::|[-–—]|\|)\s*([^(\n]+?)(?:\s*\((https?://[^\s)]+)\)|$)", line_s)
+        if m2:
+            name = m2.group(1).strip()
+            role = m2.group(2).strip()
+            url = m2.group(3) or ""
+            if len(name.split()) <= 4 and not any(kw in name.lower() for kw in ("company", "leadership", "executive", "verified", "source")):
+                profiles.append({
+                    "name": name,
+                    "role": role,
+                    "seniority": classify_seniority(role),
+                    "source_url": url,
+                })
+
+    return profiles
+
+
 def parse_agent_json(raw_text: str, fallback_company: str) -> dict:
-    """Extracts and validates JSON from LLM response text."""
+    """Extracts and validates JSON from LLM response text with multiple resilient fallbacks."""
     if not raw_text:
         return {"company": fallback_company, "employees": []}
 
     cleaned = raw_text.strip()
-    if "```json" in cleaned:
-        cleaned = cleaned.split("```json", 1)[1].split("```", 1)[0].strip()
-    elif cleaned.startswith("```"):
-        lines = cleaned.splitlines()
-        if lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].startswith("```"):
-            lines = lines[:-1]
-        cleaned = "\n".join(lines).strip()
+    data = None
 
-    try:
-        data = json.loads(cleaned)
-        if isinstance(data, dict) and "employees" in data:
-            # Ensure each employee has standard fields and seniority classification
-            for emp in data.get("employees", []):
-                role = emp.get("role") or emp.get("job_title", "")
-                emp["role"] = role
-                if not emp.get("seniority"):
-                    emp["seniority"] = classify_seniority(role)
-                if not emp.get("source_domain") and emp.get("source_url"):
-                    from urllib.parse import urlparse
-                    netloc = urlparse(emp["source_url"]).netloc
-                    emp["source_domain"] = netloc.replace("www.", "")
-            return data
-    except Exception:
-        pass
+    # Step 1: Look for markdown code fence blocks (```json ... ``` or ``` ... ```)
+    fences = re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
+    candidates = fences + [cleaned]
 
-    return {"company": fallback_company, "employees": [], "raw_output": raw_text}
+    for cand in candidates:
+        c_str = cand.strip()
+        if not c_str:
+            continue
+        try:
+            data = json.loads(c_str)
+            break
+        except Exception:
+            pass
+        # Try regex extract of outermost {...} or [...]
+        m = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", c_str)
+        if m:
+            try:
+                data = json.loads(m.group(1))
+                break
+            except Exception:
+                pass
+
+    employees = []
+    if isinstance(data, dict):
+        for key in ("employees", "leadership", "executives", "profiles", "team", "people"):
+            if key in data and isinstance(data[key], list):
+                employees = data[key]
+                break
+        if not employees:
+            for v in data.values():
+                if isinstance(v, list) and v and isinstance(v[0], dict):
+                    employees = v
+                    break
+    elif isinstance(data, list):
+        employees = data
+
+    # Step 2: Fallback to heuristic text extraction if JSON yielded no employees
+    if not employees:
+        fallback_emps = _extract_profiles_from_text_fallback(cleaned, fallback_company)
+        if fallback_emps:
+            employees = fallback_emps
+
+    # Standardize and classify each employee profile
+    standardized = []
+    seen_names = set()
+    for emp in employees:
+        if not isinstance(emp, dict):
+            continue
+        name = emp.get("name") or emp.get("full_name") or ""
+        name = str(name).strip()
+        if not name or name.lower() in seen_names:
+            continue
+
+        role = emp.get("role") or emp.get("job_title") or emp.get("title") or ""
+        role = str(role).strip()
+        seniority = emp.get("seniority") or classify_seniority(role)
+        source_url = emp.get("source_url") or emp.get("url") or emp.get("link") or ""
+
+        source_domain = emp.get("source_domain") or ""
+        if not source_domain and source_url:
+            netloc = urlparse(source_url).netloc.lower()
+            source_domain = netloc.replace("www.", "")
+
+        seen_names.add(name.lower())
+        standardized.append({
+            "name": name,
+            "role": role,
+            "seniority": seniority,
+            "source_domain": source_domain,
+            "source_url": source_url,
+        })
+
+    return {
+        "company": fallback_company,
+        "employees": standardized,
+        "raw_output": raw_text,
+    }
 
 
 def run_agent_stream(

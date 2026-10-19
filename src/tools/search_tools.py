@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Optional
+from typing import Optional, Any
 from urllib.parse import urlparse
 from serpapi import GoogleSearch
 from langchain_core.tools import tool
@@ -92,13 +92,55 @@ def _execute_serpapi_search(query: str, num_results: int = 8) -> list[dict]:
     return results
 
 
+def _normalize_role_filter(role_filter: Optional[Any] = None) -> str:
+    """Normalizes role filters across string, list, dict, or None inputs into a valid search query."""
+    default_filter = '(CEO OR CTO OR CFO OR COO OR "Vice President" OR VP OR Director OR "Head of" OR Founder OR "Co-Founder" OR Lead OR Manager)'
+    if not role_filter:
+        return default_filter
+
+    if isinstance(role_filter, dict):
+        values = []
+        for v in role_filter.values():
+            if isinstance(v, (list, tuple)):
+                values.extend([str(x) for x in v if x])
+            elif isinstance(v, str):
+                values.extend(re.split(r'[,|;]', v))
+        if values:
+            terms = [val.strip() for val in values if val.strip()]
+            return "(" + " OR ".join(f'"{t}"' if " " in t else t for t in terms) + ")"
+        return default_filter
+
+    if isinstance(role_filter, (list, tuple)):
+        clean_items = [str(item).strip() for item in role_filter if item]
+        if clean_items:
+            return "(" + " OR ".join(f'"{item}"' if " " in item else item for item in clean_items) + ")"
+        return default_filter
+
+    if isinstance(role_filter, str):
+        clean_str = role_filter.strip()
+        if not clean_str:
+            return default_filter
+        if "|" in clean_str or "," in clean_str:
+            parts = [p.strip() for p in re.split(r'[,|]', clean_str) if p.strip()]
+            return "(" + " OR ".join(f'"{p}"' if " " in p else p for p in parts) + ")"
+        if not (clean_str.startswith("(") and clean_str.endswith(")")) and " OR " in clean_str:
+            return f"({clean_str})"
+        return clean_str
+
+    return default_filter
+
+
 @tool
-def search_company_website_leadership(company_or_url: str) -> str:
+def search_company_website_leadership(
+    company_or_url: Optional[str] = None,
+    company: Optional[str] = None,
+) -> str:
     """Searches the official company website and public corporate pages for executive team members.
     Works with either a company name or website URL (e.g. 'twelve.co' or 'Stripe').
     Queries team rosters, leadership, and 'about us' pages on the target domain.
     """
-    company_name, domain = parse_company_and_domain(company_or_url)
+    target = company or company_or_url or ""
+    company_name, domain = parse_company_and_domain(target)
     results = []
     
     if domain:
@@ -120,14 +162,18 @@ def search_company_website_leadership(company_or_url: str) -> str:
 
 
 @tool
-def search_directories_and_linkedin(company_or_url: str, role_filter: Optional[str] = None) -> str:
+def search_directories_and_linkedin(
+    company_or_url: Optional[str] = None,
+    company: Optional[str] = None,
+    role_filter: Optional[Any] = None,
+) -> str:
     """Searches executive directories (The Org, Crunchbase, RocketReach) and professional profiles (LinkedIn)
     specifically for higher-level leadership roles (CEO, CTO, CFO, Founders, VPs, Directors, Leads, Managers).
-    Accepts company name or URL.
+    Accepts company name or URL. role_filter can be a role keyword, list, or empty.
     """
-    company_name, _ = parse_company_and_domain(company_or_url)
-    
-    role_query = role_filter if role_filter else '(CEO OR CTO OR CFO OR COO OR "Vice President" OR VP OR Director OR "Head of" OR Founder OR "Co-Founder" OR Lead OR Manager)'
+    target = company or company_or_url or ""
+    company_name, _ = parse_company_and_domain(target)
+    role_query = _normalize_role_filter(role_filter)
     
     queries = [
         # LinkedIn high-level roles
@@ -158,3 +204,5 @@ def search_directories_and_linkedin(company_or_url: str, role_filter: Optional[s
 # Legacy backward compatibility aliases
 search_company_employees = search_directories_and_linkedin
 search_company_leadership = search_company_website_leadership
+
+

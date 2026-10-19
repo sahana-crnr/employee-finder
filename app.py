@@ -360,6 +360,10 @@ if "last_result" in st.session_state and st.session_state["last_result"]:
     
     if not employees:
         st.warning("No public leadership profiles were conclusively retrieved for this company. Try a different company name or broader search.")
+        raw_output = result_data.get("raw_output")
+        if raw_output:
+            with st.expander("📝 View Raw Agent Output / Notes"):
+                st.code(raw_output)
     else:
         # Normalize and prepare DataFrame
         records = []
@@ -449,3 +453,4 @@ if "last_result" in st.session_state and st.session_state["last_result"]:
             )
 
     st.markdown('</div>', unsafe_allow_html=True)
+
