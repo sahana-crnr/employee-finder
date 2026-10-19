@@ -67,13 +67,17 @@ An autonomous research AI agent built with **LangChain** and **Ollama (llama3.2)
 
 ## Usage
 
-### Run the AI Agent
+### 1. Run the Streamlit Web Application (Claymorphism UI)
+```bash
+streamlit run app.py
+```
+This opens the claymorphic web dashboard with model switching, company URL search, and interactive leadership tables.
+
+### 2. Run via Terminal CLI
 ```bash
 python main.py
 ```
-*(You can also run `python extract_employees.py` which calls the same agent).*
-
-Enter the target company name when prompted (e.g., `Anthropic`, `Stripe`, `OpenAI`), and optionally specify a role (e.g., `engineer`, `leadership`).
+*(Or `python extract_employees.py`)*. Enter the target company name or website URL when prompted.
 
 ### Test Scripts
 - **Test SerpApi search:**

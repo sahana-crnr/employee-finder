@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Optional
 from dotenv import load_dotenv
 from langchain_ollama import ChatOllama
 
@@ -12,50 +13,63 @@ SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
 if not SERPAPI_API_KEY:
     raise ValueError("SERPAPI_API_KEY is missing from .env file.")
 
-# Model Configuration
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").lower().strip()
-MODEL_NAME = os.getenv("MODEL_NAME")
-MODEL_TEMPERATURE = float(os.getenv("MODEL_TEMPERATURE", "0"))
+# Model Configuration Defaults
+DEFAULT_LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").lower().strip()
+DEFAULT_MODEL_NAME = os.getenv("MODEL_NAME")
+DEFAULT_MODEL_TEMPERATURE = float(os.getenv("MODEL_TEMPERATURE", "0"))
 
 
-def get_llm():
-    """Initializes and returns the configured ChatModel based on LLM_PROVIDER."""
-    if LLM_PROVIDER == "ollama":
-        model = MODEL_NAME or "llama3.2"
-        return ChatOllama(model=model, temperature=MODEL_TEMPERATURE)
+def get_llm(
+    provider: Optional[str] = None,
+    model_name: Optional[str] = None,
+    temperature: Optional[float] = None,
+    api_key: Optional[str] = None,
+):
+    """Initializes and returns a LangChain ChatModel.
+    Can be called with custom parameters (from Streamlit UI) or defaults from .env.
+    """
+    prov = (provider or DEFAULT_LLM_PROVIDER).lower().strip()
+    temp = DEFAULT_MODEL_TEMPERATURE if temperature is None else float(temperature)
 
-    elif LLM_PROVIDER == "groq":
+    if prov == "ollama":
+        model = model_name or DEFAULT_MODEL_NAME or "llama3.2"
+        return ChatOllama(model=model, temperature=temp)
+
+    elif prov == "groq":
         try:
             from langchain_groq import ChatGroq
         except ImportError:
             raise ImportError("Groq selected. Please install: pip install langchain-groq")
-        model = MODEL_NAME or "llama-3.3-70b-versatile"
-        return ChatGroq(model=model, temperature=MODEL_TEMPERATURE)
+        key = api_key or os.getenv("GROQ_API_KEY")
+        model = model_name or DEFAULT_MODEL_NAME or "llama-3.3-70b-versatile"
+        return ChatGroq(model=model, temperature=temp, api_key=key)
 
-    elif LLM_PROVIDER == "openai":
+    elif prov == "openai":
         try:
             from langchain_openai import ChatOpenAI
         except ImportError:
             raise ImportError("OpenAI selected. Please install: pip install langchain-openai")
-        model = MODEL_NAME or "gpt-4o-mini"
-        return ChatOpenAI(model=model, temperature=MODEL_TEMPERATURE)
+        key = api_key or os.getenv("OPENAI_API_KEY")
+        model = model_name or DEFAULT_MODEL_NAME or "gpt-4o-mini"
+        return ChatOpenAI(model=model, temperature=temp, api_key=key)
 
-    elif LLM_PROVIDER == "gemini":
+    elif prov == "gemini":
         try:
             from langchain_google_genai import ChatGoogleGenerativeAI
         except ImportError:
             raise ImportError("Gemini selected. Please install: pip install langchain-google-genai")
-        model = MODEL_NAME or "gemini-1.5-flash"
-        return ChatGoogleGenerativeAI(model=model, temperature=MODEL_TEMPERATURE)
+        key = api_key or os.getenv("GOOGLE_API_KEY")
+        model = model_name or DEFAULT_MODEL_NAME or "gemini-1.5-flash"
+        return ChatGoogleGenerativeAI(model=model, temperature=temp, api_key=key)
 
     else:
         raise ValueError(
-            f"Unsupported LLM_PROVIDER '{LLM_PROVIDER}'. "
+            f"Unsupported LLM_PROVIDER '{prov}'. "
             f"Supported options: 'ollama', 'groq', 'openai', 'gemini'."
         )
 
 
-# Initialize configured LLM
+# Initialize default configured LLM
 llm = get_llm()
 
 
@@ -79,4 +93,3 @@ EXCLUDED_PATHS = (
     "/community/",
     "/careers",
 )
-
