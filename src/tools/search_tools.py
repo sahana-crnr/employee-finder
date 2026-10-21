@@ -12,7 +12,7 @@ from src.config import EXCLUDED_DOMAINS, EXCLUDED_PATHS, SERPAPI_API_KEY
 LEADERSHIP_TERMS = (
     "ceo", "chief", "founder", "co-founder", "president", "partner",
     "vice president", "vp", "director", "head of", "general manager",
-    "senior manager", "architect", "lead",
+    "senior manager", "architect", "lead", "manager",
 )
 
 REJECT_HEADLINE_PHRASES = (
@@ -26,12 +26,12 @@ REJECT_HEADLINE_PHRASES = (
 )
 
 CURRENT_MARKER_RE = re.compile(
-    r"\b(present|current(?:ly)?|to date|incumbent|our new|welcomes?|delighted to welcome|anniversary|celebrating)\b|"
+    r"\b(present|current(?:ly)?|to date|incumbent|our new|welcomes?|delighted to welcome|anniversary|celebrating|stepping in as)\b|"
     r"\b\d{4}\s*[-\u2013\u2014]\s*present\b|"
-    r"\b(?:is|as)\s+(?:the\s+)?(?:ceo|cto|cfo|coo|founder|co-founder|president|vp|director|architect|head|lead)\b|"
+    r"\b(?:is|as)\s+(?:the\s+)?(?:ceo|cto|cfo|coo|founder|co-founder|president|vp|director|architect|head|lead|manager)\b|"
     r"\b(?:co-founder,\s*ceo|founder\s*&\s*ceo)\b|"
-    r"\b(?:ceo|cto|cfo|founder|co-founder|president|vp|director|architect|lead)\s+(?:at|of|with|for)\b|"
-    r"\b\w+(?:'s)?\s+(?:ceo|cto|cfo|founder|co-founder|president|vp|director|architect|lead)\b",
+    r"\b(?:ceo|cto|cfo|founder|co-founder|president|vp|director|architect|lead|manager)\s+(?:at|of|with|for)\b|"
+    r"\b\w+(?:'s)?\s+(?:ceo|cto|cfo|founder|co-founder|president|vp|director|architect|lead|manager)\b",
     re.IGNORECASE,
 )
 EMPLOYMENT_TIMELINE_RE = re.compile(
@@ -79,8 +79,8 @@ def classify_seniority(role: str) -> str:
         return "Founder / Executive"
     if any(k in role_lower for k in ("vice president", "vp", "director", "head of")):
         return "VP / Director"
-    if any(k in role_lower for k in ("senior manager", "general manager", "manager")):
-        return "Senior Manager"
+    if any(k in role_lower for k in ("manager",)):
+        return "Manager"
     if any(k in role_lower for k in ("lead", "architect", "principal", "staff")):
         return "Lead / Architect"
     return "Other"
@@ -121,17 +121,23 @@ def _has_direct_company_affiliation(text: str, company_name: str) -> bool:
         candidates.append(re.escape(brand))
 
     boundary = r"(?=\b|[,|/\u00b7']|\s|$)"
-    role = r"(?:ceo|chief(?: executive| technology| financial| operating)? officer|founder|co-founder|president|partner|vice president|vp|director|head of|general manager|senior manager|architect|lead)"
+    role = (
+        r"(?:ceo|chief(?: executive| technology| financial| operating)? officer|"
+        r"founder|co-founder|president|partner|vice president|vp|director|head of|"
+        r"(?:general|senior|technical|project|product|engineering|delivery|operations|account|program)?\s*manager|"
+        r"manager|architect|lead)"
+    )
 
     for co in candidates:
         patterns = (
             rf"(?:\bat\s+|\bwith\s+|\bfor\s+|\bof\s+|@\s*){co}{boundary}",
-            rf"\b{role}\b\s*(?:[-|/:\u2013\u2014\u00b7]\s*)+{co}{boundary}",
-            rf"{co}(?:'s)?{boundary}\s*(?:[-|/:\u2013\u2014\u00b7]\s*)+\b{role}\b",
+            rf"\b{role}\b\s*(?:[-|/:\u2013\u2014\u00b7.,]\s*)+{co}{boundary}",
+            rf"{co}(?:'s)?{boundary}\s*(?:[-|/:\u2013\u2014\u00b7.,]\s*)+\b{role}\b",
             rf"{co}(?:'s)?\s+\b{role}\b",
             rf"\bcurrent(?:ly)?\s+(?:company|employer)\s*:?\s*{co}{boundary}",
-            rf"{co}\b.{{0,80}}?\b(?:delighted to welcome|welcome|appoints?|hires?|celebrating|announced)\b.{{0,60}}?\b{role}\b",
+            rf"{co}\b.{{0,80}}?\b(?:delighted to welcome|welcome|appoints?|hires?|celebrating|announced|stepping in as)\b.{{0,60}}?\b{role}\b",
             rf"{co}\b.{{0,60}}?\b(?:work anniversary|celebrating)\b",
+            rf"\b{role}\b.{{0,30}}?\b(?:at|with|for|in|@)\s+{co}{boundary}",
         )
         if any(re.search(pat, text, re.IGNORECASE) for pat in patterns):
             return True
@@ -354,22 +360,18 @@ def search_linkedin_leadership(
     results = _execute_serpapi_search(
         query,
         company_name=company_name,
-        num_results=15,
+        num_results=20,
     )
     exact_matches = [item for item in results if isinstance(item, dict) and item.get("url")]
 
     used_fallback = False
     fallback_query = ""
-    if len(exact_matches) < 3:
-        if active_domain:
-            fallback_query = f'"{brand}" (CEO OR CTO OR Founder OR President OR Director) "{active_domain}"'
-        else:
-            fallback_query = f'site:linkedin.com "{brand}" (CEO OR CTO OR Founder OR President OR Director OR Lead)'
-
+    if len(exact_matches) < 4:
+        fallback_query = f'site:linkedin.com "{brand}" {role_query}'
         fallback_results = _execute_serpapi_search(
             fallback_query,
             company_name=company_name,
-            num_results=15,
+            num_results=20,
             company_match=brand,
         )
         seen = {item["url"] for item in exact_matches}
@@ -384,7 +386,7 @@ def search_linkedin_leadership(
             "query": query,
             "fallback_query": fallback_query,
             "used_first_word_fallback": used_fallback,
-            "results": exact_matches[:8],
+            "results": exact_matches[:15],
         },
         ensure_ascii=False,
     )

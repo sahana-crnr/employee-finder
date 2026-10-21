@@ -73,6 +73,8 @@ def _role_is_supported(role: str, evidence_text: str) -> bool:
     normalized_evidence = " ".join(re.findall(r"[a-z0-9]+", evidence_text.lower()))
     if normalized_role and normalized_role in normalized_evidence:
         return True
+    if "manager" in normalized_role and "manager" in normalized_evidence:
+        return True
     aliases = {
         "ceo": ("chief executive officer",),
         "cto": ("chief technology officer",),
