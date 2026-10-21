@@ -6,7 +6,7 @@ def main():
     print("-" * 60)
 
     try:
-        company = input("\nEnter company name: ").strip()
+        company = input("\nEnter company name or website URL: ").strip()
         if not company:
             print("Please enter a valid company name.")
             return

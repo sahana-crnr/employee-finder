@@ -1,164 +1,165 @@
 import json
-from typing import Optional, Generator, Any
+import re
+from typing import Any, Generator, Optional
+from urllib.parse import urlparse
+
 from langchain.agents import create_agent
 
 from src.config import llm as default_llm
 from src.prompts import AGENT_SYSTEM_PROMPT
 from src.tools import (
-    search_company_website_leadership,
-    search_directories_and_linkedin,
     classify_seniority,
     parse_company_and_domain,
+    search_linkedin_leadership,
+    verify_company_google,
+    verify_company_instagram,
+)
+from src.tools.search_tools import (
+    NEGATIVE_AFFILIATION_PHRASES,
+    REJECT_HEADLINE_PHRASES,
+    _has_direct_company_affiliation,
+    _has_rejected_company_affiliation,
 )
 
 
 def create_employee_agent(llm_instance=None):
-    """Initializes and returns a compiled LangChain AI Agent.
-    Accepts an optional custom LLM (e.g. from Streamlit model selector).
-    """
-    model = llm_instance or default_llm
-    tools = [search_company_website_leadership, search_directories_and_linkedin]
+    """Create an evidence-only extractor. SerpApi is called separately once per search."""
     return create_agent(
-        model=model,
-        tools=tools,
+        model=llm_instance or default_llm,
+        tools=[],
         system_prompt=AGENT_SYSTEM_PROMPT,
     )
 
 
-# Default agent instance
 agent = create_employee_agent()
 
 
-import re
-from urllib.parse import urlparse
+def _message_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            part.get("text", "") if isinstance(part, dict) else str(part)
+            for part in content
+        )
+    return str(content or "")
 
 
-def _extract_profiles_from_text_fallback(raw_text: str, fallback_company: str) -> list[dict]:
-    """Fallback heuristic extractor that parses bullet points and text lines when LLM outputs markdown instead of JSON."""
-    profiles = []
-    lines = raw_text.splitlines()
-    for line in lines:
-        line_s = line.strip()
-        if not line_s or line_s.startswith("#") or "{" in line_s or "}" in line_s:
-            continue
-
-        # Match markdown bullets e.g. - **Name**: Role (URL) or - Name - Role - URL
-        m1 = re.search(r"[-*•]\s*\**([A-Z][a-zA-Z\.\s]+?)\**\s*(?::|[-–—]|\|)\s*([^(\n]+?)(?:\s*\((https?://[^\s)]+)\)|\s*[-–—|]\s*(https?://\S+)|$)", line_s)
-        if m1:
-            name = m1.group(1).strip()
-            role = m1.group(2).strip()
-            url = m1.group(3) or m1.group(4) or ""
-            if len(name.split()) <= 4 and not any(kw in name.lower() for kw in ("company", "leadership", "executive", "verified", "source", "http", "note")):
-                profiles.append({
-                    "name": name,
-                    "role": role,
-                    "seniority": classify_seniority(role),
-                    "source_url": url,
-                })
-                continue
-
-        # Match numbered list e.g. 1. Name - Role (URL)
-        m2 = re.search(r"^\d+\.\s*\**([A-Z][a-zA-Z\.\s]+?)\**\s*(?::|[-–—]|\|)\s*([^(\n]+?)(?:\s*\((https?://[^\s)]+)\)|$)", line_s)
-        if m2:
-            name = m2.group(1).strip()
-            role = m2.group(2).strip()
-            url = m2.group(3) or ""
-            if len(name.split()) <= 4 and not any(kw in name.lower() for kw in ("company", "leadership", "executive", "verified", "source")):
-                profiles.append({
-                    "name": name,
-                    "role": role,
-                    "seniority": classify_seniority(role),
-                    "source_url": url,
-                })
-
-    return profiles
-
-
-def parse_agent_json(raw_text: str, fallback_company: str) -> dict:
-    """Extracts and validates JSON from LLM response text with multiple resilient fallbacks."""
-    if not raw_text:
-        return {"company": fallback_company, "employees": []}
-
+def _extract_json(raw_text: str) -> Any:
     cleaned = raw_text.strip()
-    data = None
-
-    # Step 1: Look for markdown code fence blocks (```json ... ``` or ``` ... ```)
-    fences = re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
-    candidates = fences + [cleaned]
-
-    for cand in candidates:
-        c_str = cand.strip()
-        if not c_str:
-            continue
+    candidates = re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
+    candidates.append(cleaned)
+    for candidate in candidates:
         try:
-            data = json.loads(c_str)
-            break
-        except Exception:
-            pass
-        # Try regex extract of outermost {...} or [...]
-        m = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", c_str)
-        if m:
-            try:
-                data = json.loads(m.group(1))
-                break
-            except Exception:
-                pass
+            return json.loads(candidate.strip())
+        except (json.JSONDecodeError, TypeError):
+            match = re.search(r"\{[\s\S]*\}", candidate)
+            if match:
+                try:
+                    return json.loads(match.group(0))
+                except json.JSONDecodeError:
+                    continue
+    return None
 
-    employees = []
-    if isinstance(data, dict):
-        for key in ("employees", "leadership", "executives", "profiles", "team", "people"):
-            if key in data and isinstance(data[key], list):
-                employees = data[key]
-                break
-        if not employees:
-            for v in data.values():
-                if isinstance(v, list) and v and isinstance(v[0], dict):
-                    employees = v
-                    break
-    elif isinstance(data, list):
-        employees = data
 
-    # Step 2: Fallback to heuristic text extraction if JSON yielded no employees
-    if not employees:
-        fallback_emps = _extract_profiles_from_text_fallback(cleaned, fallback_company)
-        if fallback_emps:
-            employees = fallback_emps
+def _text_contains_phrase(text: str, phrase: str) -> bool:
+    normalized_text = " ".join(re.findall(r"[a-z0-9]+", text.lower()))
+    normalized_phrase = " ".join(re.findall(r"[a-z0-9]+", phrase.lower()))
+    return bool(normalized_phrase) and f" {normalized_phrase} " in f" {normalized_text} "
 
-    # Standardize and classify each employee profile
+
+def _role_is_supported(role: str, evidence_text: str) -> bool:
+    normalized_role = " ".join(re.findall(r"[a-z0-9]+", role.lower()))
+    normalized_evidence = " ".join(re.findall(r"[a-z0-9]+", evidence_text.lower()))
+    if normalized_role and normalized_role in normalized_evidence:
+        return True
+    aliases = {
+        "ceo": ("chief executive officer",),
+        "cto": ("chief technology officer",),
+        "cfo": ("chief financial officer",),
+        "coo": ("chief operating officer",),
+        "cmo": ("chief marketing officer",),
+        "cpo": ("chief product officer",),
+        "cio": ("chief information officer",),
+        "vp": ("vice president",),
+    }
+    role_tokens = normalized_role.split()
+    return any(
+        alias in normalized_evidence
+        for token in role_tokens
+        for alias in aliases.get(token, ())
+    )
+
+
+def parse_agent_json(
+    raw_text: str,
+    fallback_company: str,
+    search_results: Optional[list[dict]] = None,
+) -> dict:
+    """Parse model output and retain only profiles grounded in the actual search results."""
+    data = _extract_json(raw_text)
+    candidates = data.get("employees", []) if isinstance(data, dict) else []
+    if not isinstance(candidates, list):
+        candidates = []
+
+    evidence_by_url = {
+        item.get("url", ""): item
+        for item in (search_results or [])
+        if isinstance(item, dict) and item.get("url")
+    }
     standardized = []
     seen_names = set()
-    for emp in employees:
-        if not isinstance(emp, dict):
+    for item in candidates:
+        if not isinstance(item, dict):
             continue
-        name = emp.get("name") or emp.get("full_name") or ""
-        name = str(name).strip()
-        if not name or name.lower() in seen_names:
+        name = str(item.get("name") or item.get("full_name") or "").strip()
+        role = str(item.get("role") or item.get("job_title") or item.get("title") or "").strip()
+        source_url = str(item.get("source_url") or item.get("url") or "").strip()
+        if not name or not role or name.lower() in seen_names:
             continue
 
-        role = emp.get("role") or emp.get("job_title") or emp.get("title") or ""
-        role = str(role).strip()
-        seniority = emp.get("seniority") or classify_seniority(role)
-        source_url = emp.get("source_url") or emp.get("url") or emp.get("link") or ""
+        evidence = evidence_by_url.get(source_url)
+        if not evidence:
+            continue
+        evidence_text = f"{evidence.get('title', '')} {evidence.get('snippet', '')}".lower()
+        if any(term in evidence_text for term in REJECT_HEADLINE_PHRASES):
+            continue
+        if any(term in evidence_text for term in NEGATIVE_AFFILIATION_PHRASES):
+            continue
+        company_evidence_name = fallback_company
+        if evidence.get("company_match") == "first-word fallback":
+            company_evidence_name = fallback_company.split()[0]
+        if _has_rejected_company_affiliation(evidence_text, company_evidence_name):
+            continue
+        if evidence.get("current_employment_evidence") != "official current team listing" and not _has_direct_company_affiliation(
+            evidence_text, company_evidence_name
+        ):
+            continue
+        if not _text_contains_phrase(evidence_text, name):
+            continue
+        if not _role_is_supported(role, evidence_text):
+            continue
+        if classify_seniority(role) == "Other":
+            continue
 
-        source_domain = emp.get("source_domain") or ""
-        if not source_domain and source_url:
-            netloc = urlparse(source_url).netloc.lower()
-            source_domain = netloc.replace("www.", "")
-
+        source_domain = evidence.get("source_domain") or (urlparse(source_url).hostname or "")
+        seniority = classify_seniority(role)
+        standardized.append(
+            {
+                "name": name,
+                "role": role,
+                "seniority": seniority,
+                "linkedin_url": source_url if "linkedin.com/in/" in source_url.lower() else "",
+                "source_domain": source_domain,
+                "source_url": source_url,
+                "source_snippet": evidence.get("snippet", "") or evidence.get("current_employment_evidence", ""),
+                "current_employment_status": evidence.get("current_employment_status", "Presently working"),
+                "employment_timeline": evidence.get("employment_timeline", "Present"),
+            }
+        )
         seen_names.add(name.lower())
-        standardized.append({
-            "name": name,
-            "role": role,
-            "seniority": seniority,
-            "source_domain": source_domain,
-            "source_url": source_url,
-        })
 
-    return {
-        "company": fallback_company,
-        "employees": standardized,
-        "raw_output": raw_text,
-    }
+    return {"company": fallback_company, "employees": standardized, "raw_output": raw_text}
 
 
 def run_agent_stream(
@@ -166,79 +167,128 @@ def run_agent_stream(
     role_preference: Optional[str] = None,
     agent_instance=None,
 ) -> Generator[dict[str, Any], None, None]:
-    """Generator yielding real-time agent execution events for Streamlit UI.
-    
-    Yields dicts with:
-      {"type": "action", "tool": str, "args": dict}
-      {"type": "observation", "tool": str}
-      {"type": "result", "data": dict, "raw": str}
-    """
-    active_agent = agent_instance or agent
+    """Verify the company with Google and Instagram, then search LinkedIn for current leaders."""
     company_name, domain = parse_company_and_domain(company_or_url)
-    
-    user_query = (
-        f"Find key leadership, C-suite, founders, directors, and managers for the company '{company_name}'"
+    active_agent = agent_instance or agent
+    verifications = []
+    for tool_name, verify_tool in (
+        ("verify_company_google", verify_company_google),
+        ("verify_company_instagram", verify_company_instagram),
+    ):
+        yield {"type": "action", "tool": tool_name, "args": {"company": company_name}}
+        try:
+            verification = json.loads(verify_tool.invoke({"company_or_url": company_or_url}))
+        except Exception as error:
+            verification = {"verified": False, "source": tool_name, "error": f"Verification failed: {error}"}
+        verifications.append(verification)
+        yield {"type": "observation", "tool": tool_name}
+
+    verified = next((item for item in verifications if item.get("verified")), None)
+    if not verified:
+        verification_errors = "; ".join(item.get("error", "") for item in verifications if item.get("error"))
+        yield {
+            "type": "result",
+            "data": {
+                "company": company_name,
+                "company_verified": False,
+                "company_page_url": "",
+                "employees": [],
+                "raw_output": verification_errors or "Google and Instagram did not confirm an exact-name company presence.",
+            },
+            "raw": "",
+        }
+        return
+
+    search_results = []
+    search_errors = []
+    seen_urls = set()
+    for tool_name, search_tool in (("search_linkedin_leadership", search_linkedin_leadership),):
+        yield {
+            "type": "action",
+            "tool": tool_name,
+            "args": {"company": company_name},
+        }
+        try:
+            search_data = json.loads(
+                search_tool.invoke({"company_or_url": company_or_url})
+            )
+        except Exception as error:
+            search_data = {"error": f"Search failed: {error}", "results": []}
+
+        raw_results = search_data.get("results", []) if isinstance(search_data, dict) else []
+        for item in raw_results:
+            if isinstance(item, dict) and item.get("url") and item["url"] not in seen_urls:
+                seen_urls.add(item["url"])
+                search_results.append(item)
+        if search_data.get("error"):
+            search_errors.append(str(search_data["error"]))
+        for item in raw_results:
+            if isinstance(item, dict) and item.get("error"):
+                search_errors.append(str(item["error"]))
+        yield {"type": "observation", "tool": tool_name}
+
+    if not search_results:
+        yield {
+            "type": "result",
+            "data": {
+                "company": company_name,
+                "company_verified": True,
+                "company_page_url": verified.get("company_url", ""),
+                "company_verification_source": verified.get("source", ""),
+                "employees": [],
+                "raw_output": " ".join(search_errors) or "The company was verified. LinkedIn search did not return indexed profiles with enough evidence of a current senior role at this company; this does not mean the company has no members.",
+            },
+            "raw": "",
+        }
+        return
+
+    extraction_request = (
+        f"Extract eligible current senior leaders for the complete company name {company_name!r}. "
+        "Use only the following SerpApi evidence. Every included person's name, role, "
+        "company association, current status, and source URL must be supported by it. "
+        "Return the required JSON. Search evidence:\n"
+        + json.dumps(search_results, ensure_ascii=False)
     )
-    if domain:
-        user_query += f" with official website domain '{domain}'"
-    if role_preference:
-        user_query += f". Target role focus: '{role_preference}'"
-    user_query += "."
-
-    inputs = {"messages": [("user", user_query)]}
     final_message = ""
+    try:
+        response = active_agent.invoke(
+            {"messages": [("user", extraction_request)]}
+        )
+        messages = response.get("messages", []) if isinstance(response, dict) else []
+        if messages:
+            final_message = _message_text(getattr(messages[-1], "content", ""))
+    except Exception as error:
+        yield {
+            "type": "result",
+            "data": {
+                "company": company_name,
+                "employees": [],
+                "raw_output": f"Profile extraction failed: {error}",
+            },
+            "raw": "",
+        }
+        return
 
-    for chunk in active_agent.stream(inputs, stream_mode="updates"):
-        for node_name, node_output in chunk.items():
-            messages = node_output.get("messages", [])
-            for msg in messages:
-                if hasattr(msg, "tool_calls") and msg.tool_calls:
-                    for tc in msg.tool_calls:
-                        yield {
-                            "type": "action",
-                            "tool": tc.get("name", "Tool"),
-                            "args": tc.get("args", {}),
-                        }
-                elif hasattr(msg, "name") and msg.name:
-                    yield {
-                        "type": "observation",
-                        "tool": msg.name,
-                    }
-                elif hasattr(msg, "content") and msg.content:
-                    final_message = msg.content
-
-    parsed_result = parse_agent_json(final_message, company_name)
-    yield {
-        "type": "result",
-        "data": parsed_result,
-        "raw": final_message,
-    }
+    parsed_result = parse_agent_json(final_message, company_name, search_results)
+    parsed_result["company_verified"] = True
+    parsed_result["company_page_url"] = verified.get("company_url", "")
+    parsed_result["company_verification_source"] = verified.get("source", "")
+    yield {"type": "result", "data": parsed_result, "raw": final_message}
 
 
 def run_agent(company: str, role_preference: Optional[str] = None, agent_instance=None):
-    """Executes the agent in CLI mode and prints streaming updates and JSON report."""
-    print(f"LangChain AI Agent activated for: {company}")
+    """Run the leadership search from the command line."""
+    print(f"Employee Finder search for: {company}")
     print("-" * 60)
-
     try:
         final_data = None
         for event in run_agent_stream(company, role_preference, agent_instance):
             if event["type"] == "action":
-                print(f"\n[Agent Action] Calling Tool: {event['tool']}")
-                print(f"  Arguments: {event['args']}")
-            elif event["type"] == "observation":
-                print(f"[Tool Observation] Completed call for: {event['tool']}")
+                print(f"Searching with {event['tool']}…")
             elif event["type"] == "result":
                 final_data = event["data"]
-
-        print("\nFinal Extracted Employee Information (JSON)")
-        print("-" * 60)
-        if final_data:
-            print(json.dumps(final_data, indent=2))
-        else:
-            print(json.dumps({"company": company, "employees": []}, indent=2))
-
+        print(json.dumps(final_data or {"company": company, "employees": []}, indent=2))
     except KeyboardInterrupt:
-        print("\nAgent execution cancelled by user.")
+        print("\nSearch cancelled.")
     except Exception as error:
-        print(f"\nError during agent execution: {error}")
+        print(f"\nSearch failed: {error}")

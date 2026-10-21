@@ -1,14 +1,14 @@
 # Employee Finder AI Agent
 
-An autonomous research AI agent built with **LangChain** and **Ollama (llama3.2)**. Equipped with dynamic search tools via SerpApi, the agent autonomously decides how to search, investigates public employee profiles and leadership rosters, extracts verified personnel details, and reports its findings.
+An employee research app built with **LangChain** and **SerpApi**. It searches for senior leaders and returns only profiles supported by current-employment evidence and a complete company-name match.
 
 ## AI Agent Capabilities
 
-- **Autonomous Tool Calling:** Uses LangChain's agent architecture (`create_agent`) with `@tool` integrations for company employee and leadership searches.
-- **Dynamic Search Formulation:** Autonomously formulates targeted search queries for specific companies, departments, and roles.
-- **Noise Filtering:** Pre-filters irrelevant results such as job listings, reviews, salary portals, and social media.
-- **Grounded Verification:** Extracts verified individual names, roles, and company affiliations backed by public URLs, preventing hallucinations.
-- **Real-Time Agent Visibility:** Streams agent actions, tool calls, arguments, and observations directly in the terminal.
+- **Leadership focus:** Targets executives, founders, vice presidents, directors, department heads, and senior managers.
+- **Current employment checks:** Excludes former employees and job seekers; profiles need current-status evidence.
+- **Company matching:** Tries the complete name first. If LinkedIn has no qualifying profile results, retries with the first company-name word and still requires a direct current role match.
+- **Company verification and member search:** Uses Google results and Instagram company profiles only to verify the company. After verification, searches LinkedIn profiles for current leaders; Google and Instagram are not used to find members. The language model only extracts details from returned LinkedIn evidence.
+- **Source links:** Results include the supporting source and current-employment snippet.
 
 ---
 
@@ -67,11 +67,11 @@ An autonomous research AI agent built with **LangChain** and **Ollama (llama3.2)
 
 ## Usage
 
-### 1. Run the Streamlit Web Application (Claymorphism UI)
+### 1. Run the Streamlit Web Application
 ```bash
 streamlit run app.py
 ```
-This opens the claymorphic web dashboard with model switching, company URL search, and interactive leadership tables.
+This opens the web app with model settings, company search, leadership results, and CSV/JSON downloads.
 
 ### 2. Run via Terminal CLI
 ```bash
