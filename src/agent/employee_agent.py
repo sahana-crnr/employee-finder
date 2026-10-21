@@ -73,10 +73,11 @@ def _role_is_supported(role: str, evidence_text: str) -> bool:
     normalized_evidence = " ".join(re.findall(r"[a-z0-9]+", evidence_text.lower()))
     if normalized_role and normalized_role in normalized_evidence:
         return True
-    if "manager" in normalized_role and "manager" in normalized_evidence:
-        return True
+    if any(k in normalized_role for k in ("manager", "architect", "lead", "director", "head", "vp", "chief", "founder", "ceo", "cto", "cfo", "coo", "president")):
+        if any(k in normalized_evidence for k in ("manager", "architect", "lead", "director", "head", "vp", "chief", "founder", "ceo", "cto", "cfo", "coo", "officer", "president")):
+            return True
     aliases = {
-        "ceo": ("chief executive officer",),
+        "ceo": ("chief executive officer", "chief executive"),
         "cto": ("chief technology officer",),
         "cfo": ("chief financial officer",),
         "coo": ("chief operating officer",),
@@ -85,12 +86,52 @@ def _role_is_supported(role: str, evidence_text: str) -> bool:
         "cio": ("chief information officer",),
         "vp": ("vice president",),
     }
-    role_tokens = normalized_role.split()
-    return any(
-        alias in normalized_evidence
-        for token in role_tokens
-        for alias in aliases.get(token, ())
-    )
+    for short, longs in aliases.items():
+        for long in longs:
+            if (short in normalized_role and long in normalized_evidence) or (long in normalized_role and short in normalized_evidence):
+                return True
+    return False
+
+
+def _find_exact_linkedin_profile(
+    name: str,
+    company: str,
+    search_results: Optional[list[dict]] = None,
+) -> Optional[str]:
+    """Resolve the person's exact LinkedIn profile URL (https://www.linkedin.com/in/<username>)."""
+    clean_name = name.lower().replace(".", "").strip()
+    parts = [p for p in clean_name.split() if len(p) > 1]
+
+    # 1. Check already-fetched search results
+    for item in (search_results or []):
+        url = item.get("url", "")
+        if "/in/" in url.lower():
+            text = f"{item.get('title', '')} {item.get('snippet', '')}".lower().replace(".", "")
+            if parts and all(p in text for p in parts):
+                return url
+
+    # 2. Try looking up exact personal profile via SerpApi if available
+    from src.tools.search_tools import clean_brand_name
+    brand = clean_brand_name(company).strip()
+    query = f'site:linkedin.com/in/ "{name}" "{brand}"'
+    try:
+        from serpapi import GoogleSearch
+        from src.config import SERPAPI_API_KEY
+        if SERPAPI_API_KEY:
+            res = GoogleSearch({
+                "engine": "google",
+                "q": query,
+                "api_key": SERPAPI_API_KEY,
+                "num": 3,
+            }).get_dict()
+            for item in res.get("organic_results", []):
+                link = (item.get("link") or "").strip()
+                parsed = urlparse(link)
+                if "/in/" in parsed.path.lower() and not any(dir_term in parsed.path.lower() for dir_term in ("/dir/", "/pub/dir/")):
+                    return link
+    except Exception:
+        pass
+    return None
 
 
 def parse_agent_json(
@@ -122,6 +163,19 @@ def parse_agent_json(
 
         evidence = evidence_by_url.get(source_url)
         if not evidence:
+            clean_s = source_url.rstrip("/").split("?")[0].lower()
+            for ev_url, ev_item in evidence_by_url.items():
+                if ev_url.rstrip("/").split("?")[0].lower() == clean_s:
+                    evidence = ev_item
+                    break
+        if not evidence:
+            for ev_item in (search_results or []):
+                if isinstance(ev_item, dict) and _text_contains_phrase(
+                    f"{ev_item.get('title', '')} {ev_item.get('snippet', '')}", name
+                ):
+                    evidence = ev_item
+                    break
+        if not evidence:
             continue
         evidence_text = f"{evidence.get('title', '')} {evidence.get('snippet', '')}".lower()
         if any(term in evidence_text for term in REJECT_HEADLINE_PHRASES):
@@ -133,7 +187,12 @@ def parse_agent_json(
             company_evidence_name = fallback_company.split()[0]
         if _has_rejected_company_affiliation(evidence_text, company_evidence_name):
             continue
-        if evidence.get("current_employment_evidence") != "official current team listing" and not _has_direct_company_affiliation(
+        is_roster = (
+            evidence.get("current_employment_evidence") == "official current team listing"
+            or "theorg.com" in evidence.get("source_domain", "")
+            or "theorg.com" in source_url
+        )
+        if not is_roster and not _has_direct_company_affiliation(
             evidence_text, company_evidence_name
         ):
             continue
@@ -146,7 +205,11 @@ def parse_agent_json(
 
         source_domain = evidence.get("source_domain") or (urlparse(source_url).hostname or "")
         seniority = classify_seniority(role)
-        linkedin_url = source_url if "linkedin.com/in/" in source_url.lower() else ""
+        linkedin_url = source_url if "/in/" in source_url.lower() else ""
+        if not linkedin_url:
+            exact_profile = _find_exact_linkedin_profile(name, fallback_company, search_results)
+            if exact_profile:
+                linkedin_url = exact_profile
         if not linkedin_url:
             encoded_kw = quote(f"{name} {fallback_company}".strip())
             linkedin_url = f"https://www.linkedin.com/search/results/people/?keywords={encoded_kw}"
@@ -210,19 +273,28 @@ def run_agent_stream(
 
     # Extract official company domain from verification or input
     discovered_domain = domain
+    social_and_generic_domains = (
+        "google", "instagram", "squarespace", "facebook", "twitter",
+        "linkedin", "youtube", "tiktok", "gmail", "yahoo", "glassdoor",
+        "ambitionbox", "zaubacorp", "naukri", "indeed", "builtin",
+        "theorg", "crunchbase"
+    )
+    if discovered_domain and any(ex in discovered_domain.lower() for ex in social_and_generic_domains):
+        discovered_domain = ""
+
     if verified:
         snip = verified.get("snippet", "")
         email_m = re.search(r"@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", snip)
         if email_m:
             cand = email_m.group(1).lower().removeprefix("www.")
-            if not any(ex in cand for ex in ("google", "instagram", "squarespace", "facebook", "twitter", "gmail", "yahoo")):
+            if not any(ex in cand for ex in social_and_generic_domains):
                 discovered_domain = cand
         if not discovered_domain:
             comp_url = verified.get("company_url", "")
             if comp_url:
                 parsed_c = urlparse(comp_url)
                 cand = (parsed_c.hostname or "").lower().removeprefix("www.")
-                if not any(ex in cand for ex in ("google", "instagram", "squarespace", "facebook", "twitter")):
+                if not any(ex in cand for ex in social_and_generic_domains):
                     discovered_domain = cand
 
     search_results = []
@@ -272,10 +344,10 @@ def run_agent_stream(
         return
 
     extraction_request = (
-        f"Extract eligible current senior leaders for the complete company name {company_name!r}. "
-        "Use only the following SerpApi evidence. Every included person's name, role, "
-        "company association, current status, and source URL must be supported by it. "
-        "Return the required JSON. Search evidence:\n"
+        f"Extract ALL qualifying current leaders, executives, founders, architects, and managers for {company_name!r}. "
+        "Be thorough: extract every single qualifying individual mentioned in the search evidence. "
+        "Do not stop after one or two people; include every qualifying leader and manager found across all snippets. "
+        "Return the complete list in 'employees' in valid JSON. Search evidence:\n"
         + json.dumps(search_results, ensure_ascii=False)
     )
     final_message = ""

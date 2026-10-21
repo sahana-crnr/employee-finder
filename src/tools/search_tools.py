@@ -182,14 +182,14 @@ def _company_verification_search(company_name: str, query: str, source: str) -> 
         if not _contains_full_company_name(f"{title} {snippet}", company_name):
             continue
         if source == "Instagram":
-            if host != "instagram.com" or len([p for p in parsed.path.split("/") if p]) != 1:
+            if not (host == "instagram.com" or host.endswith(".instagram.com")) or len([p for p in parsed.path.split("/") if p]) != 1:
                 continue
             if any(word in f"{title} {snippet}".lower() for word in ("post", "reel", "stories")):
                 continue
         else:
-            if host in {"linkedin.com", "instagram.com", "facebook.com", "x.com", "twitter.com", "youtube.com"}:
+            if any(domain in host for domain in ("linkedin.", "instagram.", "facebook.", "x.com", "twitter.", "youtube.", "tiktok.", "glassdoor.", "ambitionbox.", "zaubacorp.", "builtin.", "naukri.", "indeed.", "quora.")):
                 continue
-            if any(part in host for part in ("crunchbase", "theorg", "bloomberg", "zoominfo")):
+            if any(part in host for part in ("crunchbase", "theorg", "bloomberg", "zoominfo", "pitchbook", "myworkdayjobs")):
                 continue
         return {"verified": True, "company": company_name, "company_url": url, "title": title, "snippet": snippet, "source": source, "query": query}
     return {"verified": False, "company": company_name, "source": source, "query": query, "error": f"No exact-name {source} company result was found."}
@@ -350,6 +350,8 @@ def search_linkedin_leadership(
     target = company or company_or_url or ""
     company_name, parsed_domain = parse_company_and_domain(target)
     active_domain = domain or parsed_domain
+    if active_domain and any(ex in active_domain.lower() for ex in ("linkedin", "instagram", "facebook", "twitter", "glassdoor", "naukri", "theorg", "crunchbase")):
+        active_domain = None
     if not company_name:
         return json.dumps({"error": "A company name or domain is required.", "results": []})
 
@@ -368,21 +370,56 @@ def search_linkedin_leadership(
     fallback_query = ""
     if len(exact_matches) < 3:
         if active_domain:
-            fallback_query = f'"{brand}" (CEO OR CTO OR Founder OR President OR Director OR Manager OR Lead) "{active_domain}"'
+            fallback_query = f'"{brand}" (CEO OR CTO OR Founder OR President OR Director OR VP) "{active_domain}"'
+            exec_results = _execute_serpapi_search(
+                fallback_query,
+                company_name=company_name,
+                num_results=15,
+                company_match=brand,
+            )
+            seen = {item["url"] for item in exact_matches}
+            for item in exec_results:
+                if isinstance(item, dict) and item.get("url") and item["url"] not in seen:
+                    exact_matches.append(item)
+                    seen.add(item["url"])
+
+            mgr_query = f'"{brand}" (Manager OR Lead OR Architect OR Head) "{active_domain}"'
+            mgr_results = _execute_serpapi_search(
+                mgr_query,
+                company_name=company_name,
+                num_results=15,
+                company_match=brand,
+            )
+            for item in mgr_results:
+                if isinstance(item, dict) and item.get("url") and item["url"] not in seen:
+                    exact_matches.append(item)
+                    seen.add(item["url"])
+
+            if len(exact_matches) < 3:
+                li_query = f'site:linkedin.com "{brand}" (CEO OR CTO OR Founder OR President OR Director OR Manager OR Lead)'
+                li_results = _execute_serpapi_search(
+                    li_query,
+                    company_name=company_name,
+                    num_results=20,
+                    company_match=brand,
+                )
+                for item in li_results:
+                    if isinstance(item, dict) and item.get("url") and item["url"] not in seen:
+                        exact_matches.append(item)
+                        seen.add(item["url"])
         else:
             fallback_query = f'site:linkedin.com "{brand}" (CEO OR CTO OR Founder OR President OR Director OR Manager OR Lead)'
-
-        fallback_results = _execute_serpapi_search(
-            fallback_query,
-            company_name=company_name,
-            num_results=20,
-            company_match=brand,
-        )
-        seen = {item["url"] for item in exact_matches}
-        for item in fallback_results:
-            if isinstance(item, dict) and item.get("url") and item["url"] not in seen:
-                exact_matches.append(item)
-                seen.add(item["url"])
+            fallback_results = _execute_serpapi_search(
+                fallback_query,
+                company_name=company_name,
+                num_results=20,
+                company_match=brand,
+            )
+            seen = {item["url"] for item in exact_matches}
+            for item in fallback_results:
+                if isinstance(item, dict) and item.get("url") and item["url"] not in seen:
+                    exact_matches.append(item)
+                    seen.add(item["url"])
         used_fallback = True
 
     return json.dumps(
@@ -390,7 +427,7 @@ def search_linkedin_leadership(
             "query": query,
             "fallback_query": fallback_query,
             "used_first_word_fallback": used_fallback,
-            "results": exact_matches[:15],
+            "results": exact_matches[:20],
         },
         ensure_ascii=False,
     )
