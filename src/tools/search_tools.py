@@ -353,8 +353,8 @@ def search_linkedin_leadership(
     if not company_name:
         return json.dumps({"error": "A company name or domain is required.", "results": []})
 
-    safe_name = company_name.replace('"', " ").strip()
-    brand = clean_brand_name(safe_name)
+    safe_name = company_name.replace('"', " ").strip().title()
+    brand = clean_brand_name(safe_name).title()
     role_query = _normalize_role_filter(role_filter)
     query = f'site:linkedin.com "{safe_name}" {role_query}'
     results = _execute_serpapi_search(
@@ -366,8 +366,12 @@ def search_linkedin_leadership(
 
     used_fallback = False
     fallback_query = ""
-    if len(exact_matches) < 4:
-        fallback_query = f'site:linkedin.com "{brand}" {role_query}'
+    if len(exact_matches) < 3:
+        if active_domain:
+            fallback_query = f'"{brand}" (CEO OR CTO OR Founder OR President OR Director OR Manager OR Lead) "{active_domain}"'
+        else:
+            fallback_query = f'site:linkedin.com "{brand}" (CEO OR CTO OR Founder OR President OR Director OR Manager OR Lead)'
+
         fallback_results = _execute_serpapi_search(
             fallback_query,
             company_name=company_name,
