@@ -1,7 +1,7 @@
 import json
 import re
 from typing import Any, Generator, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 from langchain.agents import create_agent
 
@@ -144,14 +144,21 @@ def parse_agent_json(
 
         source_domain = evidence.get("source_domain") or (urlparse(source_url).hostname or "")
         seniority = classify_seniority(role)
+        linkedin_url = source_url if "linkedin.com/in/" in source_url.lower() else ""
+        if not linkedin_url:
+            encoded_kw = quote(f"{name} {fallback_company}".strip())
+            linkedin_url = f"https://www.linkedin.com/search/results/people/?keywords={encoded_kw}"
+
+        display_profile = linkedin_url or source_url
         standardized.append(
             {
                 "name": name,
                 "role": role,
                 "seniority": seniority,
-                "linkedin_url": source_url if "linkedin.com/in/" in source_url.lower() else "",
-                "source_domain": source_domain,
-                "source_url": source_url,
+                "linkedin_url": linkedin_url,
+                "profile_url": display_profile,
+                "source_domain": "linkedin.com" if "linkedin.com" in display_profile else source_domain,
+                "source_url": display_profile,
                 "source_snippet": evidence.get("snippet", "") or evidence.get("current_employment_evidence", ""),
                 "current_employment_status": evidence.get("current_employment_status", "Presently working"),
                 "employment_timeline": evidence.get("employment_timeline", "Present"),
@@ -199,6 +206,23 @@ def run_agent_stream(
         }
         return
 
+    # Extract official company domain from verification or input
+    discovered_domain = domain
+    if verified:
+        snip = verified.get("snippet", "")
+        email_m = re.search(r"@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})", snip)
+        if email_m:
+            cand = email_m.group(1).lower().removeprefix("www.")
+            if not any(ex in cand for ex in ("google", "instagram", "squarespace", "facebook", "twitter", "gmail", "yahoo")):
+                discovered_domain = cand
+        if not discovered_domain:
+            comp_url = verified.get("company_url", "")
+            if comp_url:
+                parsed_c = urlparse(comp_url)
+                cand = (parsed_c.hostname or "").lower().removeprefix("www.")
+                if not any(ex in cand for ex in ("google", "instagram", "squarespace", "facebook", "twitter")):
+                    discovered_domain = cand
+
     search_results = []
     search_errors = []
     seen_urls = set()
@@ -210,7 +234,10 @@ def run_agent_stream(
         }
         try:
             search_data = json.loads(
-                search_tool.invoke({"company_or_url": company_or_url})
+                search_tool.invoke({
+                    "company_or_url": company_or_url,
+                    "domain": discovered_domain or "",
+                })
             )
         except Exception as error:
             search_data = {"error": f"Search failed: {error}", "results": []}
