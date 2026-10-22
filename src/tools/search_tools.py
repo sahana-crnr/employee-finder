@@ -12,7 +12,8 @@ from src.config import EXCLUDED_DOMAINS, EXCLUDED_PATHS, SERPAPI_API_KEY
 LEADERSHIP_TERMS = (
     "ceo", "chief", "founder", "co-founder", "president", "partner",
     "vice president", "vp", "director", "head of", "general manager",
-    "senior manager", "architect", "lead", "manager",
+    "senior manager", "architect", "lead", "manager", "engineer", "developer",
+    "specialist", "analyst", "consultant", "sales", "talent", "recruiter",
 )
 
 REJECT_HEADLINE_PHRASES = (
@@ -21,8 +22,24 @@ REJECT_HEADLINE_PHRASES = (
     "notice period", "actively looking", "seeking opportunities",
     "seeking new opportunities", "looking for new", "looking for next",
     "looking for opportunities", "available immediately", "immediately available",
-    "ready to join", "job seeker", "jobseeker",
+    "ready to join", "job seeker", "jobseeker", "ex-employee", "former employee",
+    "alumni",
 )
+
+TITLE_ROLE_WORDS = {
+    "founder", "co-founder", "cofounder", "builder", "ceo", "cto", "cfo", "coo", "cmo", "cio", "cpo", "cro",
+    "president", "partner", "principal", "director", "vp", "head", "lead", "leader", "chief", "manager",
+    "general manager", "officer", "executive", "supervisor", "engineer", "engineering", "developer", "dev",
+    "architect", "coder", "programmer", "devops", "sde", "swe", "sre", "qa", "tester", "testing", "data",
+    "ai", "ml", "scientist", "analyst", "full stack", "fullstack", "frontend", "front-end", "backend",
+    "back-end", "cloud", "system", "systems", "platform", "platforms", "security", "infrastructure",
+    "product", "project", "scrum", "agile", "designer", "design", "ui", "ux", "business", "sales",
+    "marketing", "operations", "account", "customer", "success", "growth", "strategy", "consultant",
+    "specialist", "associate", "coordinator", "representative", "bdr", "sdr", "talent", "acquisition",
+    "recruiter", "recruitment", "hr", "human resources", "people", "finance", "accountant", "accounting",
+    "legal", "counsel", "advisor", "intern", "student", "professional", "contributor", "freelance",
+    "freelancer", "contractor", "senior", "junior", "staff", "ii", "iii", "iv", "1", "2", "3"
+}
 
 CURRENT_MARKER_RE = re.compile(
     r"\b(present|current(?:ly)?|to date|incumbent|our new|welcomes?|delighted to welcome|anniversary|celebrating|stepping in as)\b|"
@@ -72,17 +89,23 @@ def parse_company_and_domain(input_text: str) -> tuple[str, str]:
 
 def classify_seniority(role: str) -> str:
     role_lower = role.lower()
-    if any(k in role_lower for k in ("ceo", "cto", "cfo", "coo", "cmo", "cpo", "cro", "cio", "chief")):
+    if any(k in role_lower for k in ("ceo", "cto", "cfo", "coo", "cmo", "cpo", "cro", "cio", "chief executive", "chief technology", "chief")):
         return "C-Suite"
-    if any(k in role_lower for k in ("founder", "co-founder", "president", "partner", "owner")):
-        return "Founder / Executive"
-    if any(k in role_lower for k in ("vice president", "vp", "director")) or re.search(r"\bhead(?:\s+of)?\b", role_lower):
+    if any(k in role_lower for k in ("vice president", "vp", "director")) or re.search(r"\bhead(?:\s+of)?\b", role_lower) or "department head" in role_lower:
         return "VP / Director"
-    if any(k in role_lower for k in ("manager",)):
+    if any(k in role_lower for k in ("founder", "co-founder", "cofounder", "president", "partner", "owner", "builder")):
+        return "Founder / Executive"
+    if any(k in role_lower for k in ("manager", "management")):
         return "Manager"
     if any(k in role_lower for k in ("lead", "architect", "principal", "staff")):
         return "Lead / Architect"
-    return "Other"
+    if any(k in role_lower for k in ("engineer", "developer", "sde", "swe", "devops", "programmer", "coder", "scientist", "analyst", "qa", "tester", "platform", "cloud")):
+        return "Engineering / Technical"
+    if any(k in role_lower for k in ("sales", "account", "business development", "growth", "marketing", "operations", "customer", "bdr", "sdr")):
+        return "Operations / Business"
+    if any(k in role_lower for k in ("talent", "recruiter", "recruiting", "hr", "human resources", "people")):
+        return "Talent / HR"
+    return "Professional / Staff"
 
 
 def _normalized_text(value: str) -> str:
@@ -111,7 +134,7 @@ def _contains_full_company_name(text: str, company_name: str) -> bool:
 
 
 def _has_direct_company_affiliation(text: str, company_name: str) -> bool:
-    """Match common title and snippet layouts while requiring company affiliation."""
+    """Match common title and snippet layouts while requiring positive company affiliation."""
     if any(phrase in text.lower() for phrase in NEGATIVE_AFFILIATION_PHRASES):
         return False
     candidates = [re.escape(company_name.strip())]
@@ -120,41 +143,100 @@ def _has_direct_company_affiliation(text: str, company_name: str) -> bool:
         candidates.append(re.escape(brand))
 
     boundary = r"(?=\b|[,|/\u00b7']|\s|$)"
-    role = (
-        r"(?:ceo|chief(?: executive| technology| financial| operating)? officer|"
-        r"founder|co-founder|president|partner|vice president|vp|director|head of|"
-        r"(?:general|senior|technical|project|product|engineering|delivery|operations|account|program)?\s*manager|"
-        r"manager|architect|lead)"
-    )
-
     for co in candidates:
         patterns = (
             rf"(?:\bat\s+|\bwith\s+|\bfor\s+|\bof\s+|@\s*){co}{boundary}",
-            rf"\b{role}\b\s*(?:[-|/:\u2013\u2014\u00b7.,]\s*)+{co}{boundary}",
-            rf"{co}(?:'s)?{boundary}\s*(?:[-|/:\u2013\u2014\u00b7.,]\s*)+\b{role}\b",
-            rf"{co}(?:'s)?\s+\b{role}\b",
-            rf"\bcurrent(?:ly)?\s+(?:company|employer)\s*:?\s*{co}{boundary}",
-            rf"{co}\b.{{0,80}}?\b(?:delighted to welcome|welcome|appoints?|hires?|celebrating|announced|stepping in as)\b.{{0,60}}?\b{role}\b",
-            rf"{co}\b.{{0,60}}?\b(?:work anniversary|celebrating)\b",
-            rf"\b{role}\b.{{0,30}}?\b(?:at|with|for|in|@)\s+{co}{boundary}",
+            rf"{co}{boundary}\s*(?:[-|/:\u2013\u2014\u00b7.,]\s*)+",
+            rf"\b(?:introduce you to|currently\s+at|at\s+{co}|experience:\s*{co}|working\s+at|lead\s+at|engineer\s+at)\b",
+            rf"{co}\b.{{0,80}}?\b(?:present|current|now)\b",
+            rf"\b(?:present|current|now)\b.{{0,80}}?{co}\b",
+            rf"{co}\b.{{0,80}}?\b(?:delighted to welcome|welcome|appoints?|hires?|celebrating|announced|stepping in as)\b",
+            rf"{co}(?:'s)?\s+\b(?:team|employees?|founders?|leadership|staff)\b",
         )
         if any(re.search(pat, text, re.IGNORECASE) for pat in patterns):
             return True
     return False
 
 
+def is_disqualified_as_former_or_left(
+    title: str,
+    snippet: str,
+    company_name: str,
+    brand: Optional[str] = None,
+) -> tuple[bool, str]:
+    """Detect if an individual has left the company, joined another employer, is on notice, or is a former employee."""
+    text = f"{title} {snippet}".lower()
+    co_brand = (brand or clean_brand_name(company_name)).strip().lower()
+    co_full = company_name.strip().lower()
+    co_pat = rf"\b(?:{re.escape(co_full)}|{re.escape(co_brand)})\b"
+
+    # 1. Reject phrases like notice period / immediate joiner / open to work
+    for phrase in REJECT_HEADLINE_PHRASES:
+        if phrase in text:
+            return True, f"Reject phrase matched: {phrase}"
+
+    # 2. Check for Ex-<Company>, Former, Past, Retired from, Resigned from, Worked at
+    for m in re.finditer(co_pat, text, re.IGNORECASE):
+        before = text[max(0, m.start() - 60):m.start()]
+        ex_m = re.search(
+            r"\b(?:past|former|previously|ex|retired\s+from|resigned\s+from|worked\s+at|left)\b[\s\S]{0,40}?$",
+            before,
+            re.IGNORECASE,
+        )
+        if ex_m:
+            sub = ex_m.group(0)
+            if not re.search(r"\b(?:current|present)\b", sub, re.IGNORECASE):
+                return True, f"Target company preceded by past/former: {sub.strip()}"
+
+        if re.search(r"\bex\s*[-–—/]\s*$", before, re.IGNORECASE):
+            return True, f"Hyphenated ex- prefix before company: {before.strip()}"
+
+        # Check what follows company for ended date range: e.g. 2019 - 2022 or Jun 2020 - Aug 2023
+        after = text[m.end():m.end() + 60]
+        m_range = re.search(r"\b(20\d{2})\s*(?:[-–—]|to)\s*(20\d{2})\b", after)
+        if m_range:
+            return True, f"Tenure ended at company: {m_range.group(0)}"
+        m_my = re.search(
+            r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+20\d{2}\s*(?:[-–—]|to)\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+20\d{2}\b",
+            after,
+            re.IGNORECASE,
+        )
+        if m_my:
+            return True, f"Tenure ended at company: {m_my.group(0)}"
+
+    # 3. Check if LinkedIn title headline indicates current employment at another company
+    clean = re.sub(r"\s*[-|]\s*linkedin.*$", "", title, flags=re.IGNORECASE).strip()
+    parts = re.split(r"\s*[-–—:]\s*", clean, maxsplit=1)
+    if len(parts) >= 2:
+        headline = parts[1].strip()
+        # If headline specifies Ex-TargetCompany
+        if re.search(rf"\bex\s*[-–—/]?\s*{co_pat}", headline, re.IGNORECASE):
+            return True, f"Headline specifies Ex-target company: {headline}"
+
+        # If headline does not mention target company at all
+        if not re.search(co_pat, headline, re.IGNORECASE):
+            # Check if it has 'at <OtherCompany>' or '@ <OtherCompany>'
+            at_m = re.search(r"(?:at|@|with)\s+([A-Za-z0-9\s\.\,\&]+?)(?:\s*[-–—|]|$)", headline, re.IGNORECASE)
+            if at_m:
+                other_co = at_m.group(1).strip()
+                if not re.search(co_pat, other_co, re.IGNORECASE):
+                    return True, f"Headline indicates current employment at another company: {other_co}"
+
+            # Check if a segment of the headline is another company name
+            sub_parts = re.split(r"\s*[-–—|]\s*", headline)
+            for sp in sub_parts:
+                sp_clean = sp.strip()
+                tokens = [t.lower() for t in re.findall(r"[A-Za-z0-9]+", sp_clean)]
+                if tokens and len(tokens) <= 3 and not any(t in TITLE_ROLE_WORDS for t in tokens):
+                    return True, f"Headline mentions another company: {sp_clean}"
+
+    return False, "Current"
+
+
 def _has_rejected_company_affiliation(text: str, company_name: str) -> bool:
-    """Reject former/resigned status only when it is tied to the searched company."""
-    company = re.escape(company_name.strip())
-    if not company:
-        return False
-    boundary = r"(?=\b|[,|/\u00b7])"
-    patterns = (
-        rf"\b(?:former|ex|previously|past)\b[^.;|,\u00b7]{{0,50}}?\b(?:at|with|for|of)\s+{company}{boundary}",
-        rf"\b(?:resigned|retired|left)\b.{{0,50}}?\b(?:from|at)\s+{company}{boundary}",
-        rf"\b{company}{boundary}.{{0,70}}?\b(?:former employee|no longer|resigned|retired|left the company)\b",
-    )
-    return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
+    """Backwards-compatible wrapper for former/resigned check."""
+    disqualified, _ = is_disqualified_as_former_or_left("", text, company_name)
+    return disqualified
 
 
 def _employment_timeline(text: str) -> str:
@@ -296,18 +378,17 @@ def _execute_serpapi_search(
 
         # Match the complete supplied company phrase, not a partial company-name token.
         matched_company = company_match or company_name
+        brand = clean_brand_name(matched_company)
         if not _contains_full_company_name(evidence_text, matched_company):
             continue
-        if _has_rejected_company_affiliation(evidence_text, matched_company):
-            continue
-        is_roster_page = is_company_site or is_directory
-        if not is_roster_page and not _has_direct_company_affiliation(evidence_text, matched_company):
-            continue
-        if not _is_leadership_result(evidence_text):
+
+        # Strict check for former / left employees
+        disqualified, _ = is_disqualified_as_former_or_left(title, snippet, matched_company, brand)
+        if disqualified:
             continue
 
-        # A current team page is current evidence. LinkedIn results must show a current marker.
-        if not is_roster_page and not CURRENT_MARKER_RE.search(evidence_text):
+        is_roster_page = is_company_site or is_directory
+        if not is_roster_page and not _has_direct_company_affiliation(evidence_text, matched_company):
             continue
 
         seen_urls.add(url)
@@ -327,16 +408,24 @@ def _execute_serpapi_search(
 
 
 def _normalize_role_filter(role_filter: Optional[Any] = None) -> str:
-    """Keep the agent tool signature compatible while limiting results to senior roles."""
+    """Normalize user-specified role filter for SerpApi query."""
     if not role_filter:
-        return '(CEO OR CTO OR Founder OR President OR VP OR Director OR "Head of" OR "Department Head" OR "Engineering Manager" OR "Project Manager" OR "Product Manager" OR "Operations Manager" OR "Team Lead" OR "Technical Lead" OR Architect OR Manager OR Lead)'
+        return ""
     if isinstance(role_filter, str):
-        return role_filter
+        clean = role_filter.strip()
+        if not clean:
+            return ""
+        if clean.startswith("(") and clean.endswith(")"):
+            return clean
+        terms = [t.strip() for t in re.split(r"[,/|;]+", clean) if t.strip()]
+        if len(terms) > 1:
+            return "(" + " OR ".join(f'"{t}"' for t in terms) + ")"
+        return f'"{clean}"'
     if isinstance(role_filter, (list, tuple)):
         terms = [str(item).strip() for item in role_filter if item]
         if terms:
             return "(" + " OR ".join(f'"{term}"' for term in terms) + ")"
-    return '(CEO OR CTO OR Founder OR President OR VP OR Director OR "Head of" OR "Department Head" OR "Engineering Manager" OR "Project Manager" OR "Product Manager" OR "Operations Manager" OR "Team Lead" OR "Technical Lead" OR Architect OR Manager OR Lead)'
+    return ""
 
 
 @tool
@@ -346,7 +435,7 @@ def search_linkedin_leadership(
     role_filter: Optional[Any] = None,
     domain: Optional[str] = None,
 ) -> str:
-    """Search LinkedIn profiles and verified company sources for current senior leaders."""
+    """Search LinkedIn profiles and verified company sources for current team members and leaders."""
     target = company or company_or_url or ""
     company_name, parsed_domain = parse_company_and_domain(target)
     active_domain = domain or parsed_domain
@@ -358,7 +447,11 @@ def search_linkedin_leadership(
     safe_name = company_name.replace('"', " ").strip().title()
     brand = clean_brand_name(safe_name).title()
     role_query = _normalize_role_filter(role_filter)
-    query = f'site:linkedin.com "{safe_name}" {role_query}'
+    if role_query:
+        query = f'site:linkedin.com/in/ "{safe_name}" {role_query}'
+    else:
+        query = f'site:linkedin.com/in/ "{safe_name}"'
+
     results = _execute_serpapi_search(
         query,
         company_name=company_name,
@@ -370,11 +463,11 @@ def search_linkedin_leadership(
     fallback_query = ""
     if len(exact_matches) < 3:
         if active_domain:
-            fallback_query = f'"{brand}" "{active_domain}" (CEO OR Founder OR Manager OR Architect OR Director)'
+            fallback_query = f'"{brand}" "{active_domain}" (CEO OR Founder OR Manager OR Architect OR Engineer)'
             exec_results = _execute_serpapi_search(
                 fallback_query,
                 company_name=company_name,
-                num_results=20,
+                num_results=15,
                 company_match=brand,
             )
             seen = {item["url"] for item in exact_matches}
@@ -382,34 +475,8 @@ def search_linkedin_leadership(
                 if isinstance(item, dict) and item.get("url") and item["url"] not in seen:
                     exact_matches.append(item)
                     seen.add(item["url"])
-
-            if len(exact_matches) < 3:
-                mgr_query = f'"{brand}" (Manager OR Lead OR Architect) "{active_domain}"'
-                mgr_results = _execute_serpapi_search(
-                    mgr_query,
-                    company_name=company_name,
-                    num_results=15,
-                    company_match=brand,
-                )
-                for item in mgr_results:
-                    if isinstance(item, dict) and item.get("url") and item["url"] not in seen:
-                        exact_matches.append(item)
-                        seen.add(item["url"])
-
-            if len(exact_matches) < 3:
-                li_query = f'site:linkedin.com "{brand}" (CEO OR CTO OR Founder OR President OR Director OR Manager OR Lead)'
-                li_results = _execute_serpapi_search(
-                    li_query,
-                    company_name=company_name,
-                    num_results=20,
-                    company_match=brand,
-                )
-                for item in li_results:
-                    if isinstance(item, dict) and item.get("url") and item["url"] not in seen:
-                        exact_matches.append(item)
-                        seen.add(item["url"])
         else:
-            fallback_query = f'site:linkedin.com "{brand}" (CEO OR CTO OR Founder OR President OR Director OR Manager OR Lead)'
+            fallback_query = f'site:linkedin.com/in/ "{brand}"'
             fallback_results = _execute_serpapi_search(
                 fallback_query,
                 company_name=company_name,

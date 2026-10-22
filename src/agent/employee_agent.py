@@ -19,6 +19,7 @@ from src.tools.search_tools import (
     REJECT_HEADLINE_PHRASES,
     _has_direct_company_affiliation,
     _has_rejected_company_affiliation,
+    is_disqualified_as_former_or_left,
 )
 
 
@@ -73,8 +74,11 @@ def _role_is_supported(role: str, evidence_text: str) -> bool:
     normalized_evidence = " ".join(re.findall(r"[a-z0-9]+", evidence_text.lower()))
     if normalized_role and normalized_role in normalized_evidence:
         return True
-    if any(k in normalized_role for k in ("manager", "architect", "lead", "director", "head", "vp", "chief", "founder", "ceo", "cto", "cfo", "coo", "president")):
-        if any(k in normalized_evidence for k in ("manager", "architect", "lead", "director", "head", "vp", "chief", "founder", "ceo", "cto", "cfo", "coo", "officer", "president")):
+    role_tokens = [t for t in normalized_role.split() if len(t) > 2]
+    if role_tokens and any(t in normalized_evidence for t in role_tokens):
+        return True
+    if any(k in normalized_role for k in ("manager", "architect", "lead", "director", "head", "vp", "chief", "founder", "ceo", "cto", "cfo", "coo", "president", "engineer", "developer", "specialist", "analyst", "consultant", "sales", "talent", "recruiter", "builder")):
+        if any(k in normalized_evidence for k in ("manager", "architect", "lead", "director", "head", "vp", "chief", "founder", "ceo", "cto", "cfo", "coo", "officer", "president", "engineer", "developer", "specialist", "analyst", "consultant", "sales", "talent", "recruiter", "builder")):
             return True
     aliases = {
         "ceo": ("chief executive officer", "chief executive"),
@@ -181,6 +185,13 @@ def parse_agent_json(
         company_evidence_name = fallback_company
         if evidence.get("company_match") == "first-word fallback":
             company_evidence_name = fallback_company.split()[0]
+        disqualified, _ = is_disqualified_as_former_or_left(
+            evidence.get("title", ""),
+            evidence.get("snippet", ""),
+            company_evidence_name,
+        )
+        if disqualified:
+            continue
         if _has_rejected_company_affiliation(evidence_text, company_evidence_name):
             continue
         is_roster = (
@@ -194,8 +205,6 @@ def parse_agent_json(
         if not _text_contains_phrase(evidence_text, name):
             continue
         if not _role_is_supported(role, evidence_text):
-            continue
-        if classify_seniority(role) == "Other":
             continue
 
         source_domain = evidence.get("source_domain") or (urlparse(source_url).hostname or "")
@@ -346,14 +355,14 @@ def run_agent_stream(
                 "company_page_url": verified.get("company_url", ""),
                 "company_verification_source": verified.get("source", ""),
                 "employees": [],
-                "raw_output": " ".join(search_errors) or "The company was verified. LinkedIn search did not return indexed profiles with enough evidence of a current senior role at this company; this does not mean the company has no members.",
+                "raw_output": " ".join(search_errors) or "The company was verified. LinkedIn search did not return indexed profiles with enough evidence of current employment at this company; this does not mean the company has no members.",
             },
             "raw": "",
         }
         return
 
     extraction_request = (
-        f"Extract EVERY qualifying current leader, executive, founder, architect, and manager for {company_name!r}. "
+        f"Extract EVERY qualifying current employee, leader, executive, founder, architect, engineer, and team member for {company_name!r}. "
         "IMPORTANT: A single search snippet or team directory often contains multiple people (e.g. both a CEO and a Founder). "
         "Carefully examine every snippet and extract each and every distinct qualifying individual mentioned across all snippets without omitting anyone. "
         "Return the complete list in 'employees' in valid JSON. Search evidence:\n"
