@@ -93,6 +93,19 @@ def _role_is_supported(role: str, evidence_text: str) -> bool:
     return False
 
 
+def _normalize_person_key(name: str) -> str:
+    """Normalize names for robust deduplication (e.g. 'Nick AJ', 'Nick A.', 'Nick A' -> 'nick a')."""
+    clean = re.sub(r"[^a-z0-9\s]", "", name.lower())
+    tokens = [t for t in clean.split() if t]
+    if not tokens:
+        return ""
+    if len(tokens) == 1:
+        return tokens[0]
+    first = tokens[0]
+    last_initial = tokens[1][0]
+    return f"{first} {last_initial}"
+
+
 def _find_exact_linkedin_profile(
     name: str,
     company: str,
@@ -130,14 +143,18 @@ def parse_agent_json(
         if isinstance(item, dict) and item.get("url")
     }
     standardized = []
-    seen_names = set()
+    seen_keys = {}
     for item in candidates:
         if not isinstance(item, dict):
             continue
         name = str(item.get("name") or item.get("full_name") or "").strip()
         role = str(item.get("role") or item.get("job_title") or item.get("title") or "").strip()
         source_url = str(item.get("source_url") or item.get("url") or "").strip()
-        if not name or not role or name.lower() in seen_names:
+        if not name or not role:
+            continue
+
+        person_key = _normalize_person_key(name)
+        if not person_key:
             continue
 
         evidence = evidence_by_url.get(source_url)
@@ -193,21 +210,32 @@ def parse_agent_json(
             linkedin_url = f"https://www.linkedin.com/search/results/people/?keywords={encoded_kw}"
 
         display_profile = linkedin_url or source_url
-        standardized.append(
-            {
-                "name": name,
-                "role": role,
-                "seniority": seniority,
-                "linkedin_url": linkedin_url,
-                "profile_url": display_profile,
-                "source_domain": "linkedin.com" if "linkedin.com" in display_profile else source_domain,
-                "source_url": display_profile,
-                "source_snippet": evidence.get("snippet", "") or evidence.get("current_employment_evidence", ""),
-                "current_employment_status": evidence.get("current_employment_status", "Presently working"),
-                "employment_timeline": evidence.get("employment_timeline", "Present"),
-            }
-        )
-        seen_names.add(name.lower())
+        record = {
+            "name": name,
+            "role": role,
+            "seniority": seniority,
+            "linkedin_url": linkedin_url,
+            "profile_url": display_profile,
+            "source_domain": "linkedin.com" if "linkedin.com" in display_profile else source_domain,
+            "source_url": display_profile,
+            "source_snippet": evidence.get("snippet", "") or evidence.get("current_employment_evidence", ""),
+            "current_employment_status": evidence.get("current_employment_status", "Presently working"),
+            "employment_timeline": evidence.get("employment_timeline", "Present"),
+        }
+
+        if person_key in seen_keys:
+            existing_idx = seen_keys[person_key]
+            existing_item = standardized[existing_idx]
+            # Upgrade existing if current record has a direct /in/ profile URL and existing does not
+            if "/in/" in display_profile.lower() and "/in/" not in existing_item.get("profile_url", "").lower():
+                standardized[existing_idx] = record
+            elif len(role) > len(existing_item.get("role", "")):
+                existing_item["role"] = role
+                existing_item["seniority"] = seniority
+            continue
+
+        seen_keys[person_key] = len(standardized)
+        standardized.append(record)
 
     return {"company": fallback_company, "employees": standardized, "raw_output": raw_text}
 
@@ -325,9 +353,9 @@ def run_agent_stream(
         return
 
     extraction_request = (
-        f"Extract ALL qualifying current leaders, executives, founders, architects, and managers for {company_name!r}. "
-        "Be thorough: extract every single qualifying individual mentioned in the search evidence. "
-        "Do not stop after one or two people; include every qualifying leader and manager found across all snippets. "
+        f"Extract EVERY qualifying current leader, executive, founder, architect, and manager for {company_name!r}. "
+        "IMPORTANT: A single search snippet or team directory often contains multiple people (e.g. both a CEO and a Founder). "
+        "Carefully examine every snippet and extract each and every distinct qualifying individual mentioned across all snippets without omitting anyone. "
         "Return the complete list in 'employees' in valid JSON. Search evidence:\n"
         + json.dumps(search_results, ensure_ascii=False)
     )

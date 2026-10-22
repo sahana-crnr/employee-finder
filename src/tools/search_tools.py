@@ -370,11 +370,11 @@ def search_linkedin_leadership(
     fallback_query = ""
     if len(exact_matches) < 3:
         if active_domain:
-            fallback_query = f'"{brand}" (CEO OR CTO OR Founder OR President OR Director) "{active_domain}"'
+            fallback_query = f'"{brand}" "{active_domain}" (CEO OR Founder OR Manager OR Architect OR Director)'
             exec_results = _execute_serpapi_search(
                 fallback_query,
                 company_name=company_name,
-                num_results=15,
+                num_results=20,
                 company_match=brand,
             )
             seen = {item["url"] for item in exact_matches}
