@@ -21,8 +21,7 @@ REJECT_HEADLINE_PHRASES = (
     "notice period", "actively looking", "seeking opportunities",
     "seeking new opportunities", "looking for new", "looking for next",
     "looking for opportunities", "available immediately", "immediately available",
-    "ready to join", "job seeker", "jobseeker", "former ", "ex-", "past:",
-    "previously at", "previous ", "retired", "resigned", "alumni",
+    "ready to join", "job seeker", "jobseeker",
 )
 
 CURRENT_MARKER_RE = re.compile(
@@ -77,7 +76,7 @@ def classify_seniority(role: str) -> str:
         return "C-Suite"
     if any(k in role_lower for k in ("founder", "co-founder", "president", "partner", "owner")):
         return "Founder / Executive"
-    if any(k in role_lower for k in ("vice president", "vp", "director", "head of")):
+    if any(k in role_lower for k in ("vice president", "vp", "director")) or re.search(r"\bhead(?:\s+of)?\b", role_lower):
         return "VP / Director"
     if any(k in role_lower for k in ("manager",)):
         return "Manager"
@@ -329,14 +328,14 @@ def _execute_serpapi_search(
 def _normalize_role_filter(role_filter: Optional[Any] = None) -> str:
     """Keep the agent tool signature compatible while limiting results to senior roles."""
     if not role_filter:
-        return '(CEO OR CTO OR Founder OR President OR VP OR Director OR Lead OR Manager)'
+        return '(CEO OR CTO OR Founder OR President OR VP OR Director OR "Head of" OR "Department Head" OR "Engineering Manager" OR "Project Manager" OR "Product Manager" OR "Operations Manager" OR "Team Lead" OR "Technical Lead" OR Architect OR Manager OR Lead)'
     if isinstance(role_filter, str):
         return role_filter
     if isinstance(role_filter, (list, tuple)):
         terms = [str(item).strip() for item in role_filter if item]
         if terms:
             return "(" + " OR ".join(f'"{term}"' for term in terms) + ")"
-    return '(CEO OR CTO OR Founder OR President OR VP OR Director OR Lead OR Manager)'
+    return '(CEO OR CTO OR Founder OR President OR VP OR Director OR "Head of" OR "Department Head" OR "Engineering Manager" OR "Project Manager" OR "Product Manager" OR "Operations Manager" OR "Team Lead" OR "Technical Lead" OR Architect OR Manager OR Lead)'
 
 
 @tool
@@ -370,7 +369,7 @@ def search_linkedin_leadership(
     fallback_query = ""
     if len(exact_matches) < 3:
         if active_domain:
-            fallback_query = f'"{brand}" (CEO OR CTO OR Founder OR President OR Director OR VP) "{active_domain}"'
+            fallback_query = f'"{brand}" (CEO OR CTO OR Founder OR President OR Director) "{active_domain}"'
             exec_results = _execute_serpapi_search(
                 fallback_query,
                 company_name=company_name,
@@ -383,17 +382,18 @@ def search_linkedin_leadership(
                     exact_matches.append(item)
                     seen.add(item["url"])
 
-            mgr_query = f'"{brand}" (Manager OR Lead OR Architect OR Head) "{active_domain}"'
-            mgr_results = _execute_serpapi_search(
-                mgr_query,
-                company_name=company_name,
-                num_results=15,
-                company_match=brand,
-            )
-            for item in mgr_results:
-                if isinstance(item, dict) and item.get("url") and item["url"] not in seen:
-                    exact_matches.append(item)
-                    seen.add(item["url"])
+            if len(exact_matches) < 3:
+                mgr_query = f'"{brand}" (Manager OR Lead OR Architect) "{active_domain}"'
+                mgr_results = _execute_serpapi_search(
+                    mgr_query,
+                    company_name=company_name,
+                    num_results=15,
+                    company_match=brand,
+                )
+                for item in mgr_results:
+                    if isinstance(item, dict) and item.get("url") and item["url"] not in seen:
+                        exact_matches.append(item)
+                        seen.add(item["url"])
 
             if len(exact_matches) < 3:
                 li_query = f'site:linkedin.com "{brand}" (CEO OR CTO OR Founder OR President OR Director OR Manager OR Lead)'

@@ -98,11 +98,11 @@ def _find_exact_linkedin_profile(
     company: str,
     search_results: Optional[list[dict]] = None,
 ) -> Optional[str]:
-    """Resolve the person's exact LinkedIn profile URL (https://www.linkedin.com/in/<username>)."""
+    """Resolve the person's exact LinkedIn profile URL from already-fetched search results without consuming extra searches."""
     clean_name = name.lower().replace(".", "").strip()
     parts = [p for p in clean_name.split() if len(p) > 1]
 
-    # 1. Check already-fetched search results
+    # Check already-fetched search results for an exact /in/ personal profile
     for item in (search_results or []):
         url = item.get("url", "")
         if "/in/" in url.lower():
@@ -110,27 +110,6 @@ def _find_exact_linkedin_profile(
             if parts and all(p in text for p in parts):
                 return url
 
-    # 2. Try looking up exact personal profile via SerpApi if available
-    from src.tools.search_tools import clean_brand_name
-    brand = clean_brand_name(company).strip()
-    query = f'site:linkedin.com/in/ "{name}" "{brand}"'
-    try:
-        from serpapi import GoogleSearch
-        from src.config import SERPAPI_API_KEY
-        if SERPAPI_API_KEY:
-            res = GoogleSearch({
-                "engine": "google",
-                "q": query,
-                "api_key": SERPAPI_API_KEY,
-                "num": 3,
-            }).get_dict()
-            for item in res.get("organic_results", []):
-                link = (item.get("link") or "").strip()
-                parsed = urlparse(link)
-                if "/in/" in parsed.path.lower() and not any(dir_term in parsed.path.lower() for dir_term in ("/dir/", "/pub/dir/")):
-                    return link
-    except Exception:
-        pass
     return None
 
 
@@ -254,6 +233,8 @@ def run_agent_stream(
             verification = {"verified": False, "source": tool_name, "error": f"Verification failed: {error}"}
         verifications.append(verification)
         yield {"type": "observation", "tool": tool_name}
+        if verification.get("verified"):
+            break
 
     verified = next((item for item in verifications if item.get("verified")), None)
     if not verified:
@@ -359,12 +340,19 @@ def run_agent_stream(
         if messages:
             final_message = _message_text(getattr(messages[-1], "content", ""))
     except Exception as error:
+        err_msg = str(error)
+        if "10061" in err_msg or "actively refused" in err_msg.lower():
+            err_msg = (
+                "Local Ollama server is not running on localhost:11434. "
+                "Please start Ollama or run 'ollama serve' in a terminal. "
+                "Alternatively, set LLM_PROVIDER=groq or openai in your .env file."
+            )
         yield {
             "type": "result",
             "data": {
                 "company": company_name,
                 "employees": [],
-                "raw_output": f"Profile extraction failed: {error}",
+                "raw_output": f"Profile extraction failed: {err_msg}",
             },
             "raw": "",
         }
