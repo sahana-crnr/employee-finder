@@ -278,10 +278,13 @@ def _execute_serpapi_search(
         is_company_site = bool(clean_domain) and (
             host == clean_domain or host.endswith(f".{clean_domain}")
         )
-        is_theorg = host == "theorg.com" or host.endswith(".theorg.com")
+        is_directory = any(
+            host == d or host.endswith(f".{d}")
+            for d in ("theorg.com", "crunchbase.com", "builtin.com", "pitchbook.com")
+        )
         if instagram_only and not is_instagram:
             continue
-        if not (is_linkedin or is_company_site or is_theorg or allow_general_web):
+        if not (is_linkedin or is_company_site or is_directory or allow_general_web):
             continue
         if is_linkedin and not any(part in parsed.path.lower() for part in ("/in/", "/posts/", "/company/")):
             continue
@@ -290,8 +293,6 @@ def _execute_serpapi_search(
             for segment in ("p", "reel", "reels", "stories", "explore")
         ):
             continue
-        if host == "crunchbase.com" or host.endswith(".crunchbase.com"):
-            continue
 
         # Match the complete supplied company phrase, not a partial company-name token.
         matched_company = company_match or company_name
@@ -299,7 +300,7 @@ def _execute_serpapi_search(
             continue
         if _has_rejected_company_affiliation(evidence_text, matched_company):
             continue
-        is_roster_page = is_company_site or (is_theorg and "/org/" in parsed.path.lower())
+        is_roster_page = is_company_site or is_directory
         if not is_roster_page and not _has_direct_company_affiliation(evidence_text, matched_company):
             continue
         if not _is_leadership_result(evidence_text):

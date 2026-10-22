@@ -168,8 +168,7 @@ def parse_agent_json(
             continue
         is_roster = (
             evidence.get("current_employment_evidence") == "official current team listing"
-            or "theorg.com" in evidence.get("source_domain", "")
-            or "theorg.com" in source_url
+            or any(d in evidence.get("source_domain", "") or d in source_url for d in ("theorg.com", "crunchbase.com", "builtin.com", "pitchbook.com"))
         )
         if not is_roster and not _has_direct_company_affiliation(
             evidence_text, company_evidence_name
