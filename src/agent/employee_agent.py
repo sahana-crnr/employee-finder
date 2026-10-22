@@ -292,6 +292,7 @@ def run_agent_stream(
                 search_tool.invoke({
                     "company_or_url": company_or_url,
                     "domain": discovered_domain or "",
+                    "role_filter": role_preference or "",
                 })
             )
         except Exception as error:
