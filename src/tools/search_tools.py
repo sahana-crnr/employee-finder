@@ -208,7 +208,14 @@ def is_disqualified_as_former_or_left(
     clean = re.sub(r"\s*[-|]\s*linkedin.*$", "", title, flags=re.IGNORECASE).strip()
     parts = re.split(r"\s*[-–—:]\s*", clean, maxsplit=1)
     if len(parts) >= 2:
+        name = parts[0].strip()
         headline = parts[1].strip()
+
+        # If the person's own surname equals the brand word (e.g. Alfredo Carnera), require full company name
+        name_tokens = [t.lower() for t in re.findall(r"[A-Za-z0-9]+", name)]
+        if co_brand in name_tokens and not _contains_full_company_name(text, company_name):
+            return True, f"Brand token '{co_brand}' is person's surname, not company affiliation"
+
         # If headline specifies Ex-TargetCompany
         if re.search(rf"\bex\s*[-–—/]?\s*{co_pat}", headline, re.IGNORECASE):
             return True, f"Headline specifies Ex-target company: {headline}"
@@ -458,10 +465,29 @@ def search_linkedin_leadership(
         num_results=20,
     )
     exact_matches = [item for item in results if isinstance(item, dict) and item.get("url")]
+    seen_urls = {item["url"] for item in exact_matches}
+
+    # Query 2: target employees and managers listing "at {brand}" or "at {safe_name}"
+    target_brand = brand if brand and brand.lower() != safe_name.lower() else safe_name
+    if role_query:
+        brand_query = f'site:linkedin.com/in/ "at {target_brand}" {role_query}'
+    else:
+        brand_query = f'site:linkedin.com/in/ "at {target_brand}"'
+
+    brand_results = _execute_serpapi_search(
+        brand_query,
+        company_name=company_name,
+        num_results=20,
+        company_match=target_brand,
+    )
+    for item in brand_results:
+        if isinstance(item, dict) and item.get("url") and item["url"] not in seen_urls:
+            exact_matches.append(item)
+            seen_urls.add(item["url"])
 
     used_fallback = False
     fallback_query = ""
-    if len(exact_matches) < 3:
+    if len(exact_matches) < 4:
         if active_domain:
             fallback_query = f'"{brand}" "{active_domain}" (CEO OR Founder OR Manager OR Architect OR Engineer)'
             exec_results = _execute_serpapi_search(
@@ -470,32 +496,31 @@ def search_linkedin_leadership(
                 num_results=15,
                 company_match=brand,
             )
-            seen = {item["url"] for item in exact_matches}
             for item in exec_results:
-                if isinstance(item, dict) and item.get("url") and item["url"] not in seen:
+                if isinstance(item, dict) and item.get("url") and item["url"] not in seen_urls:
                     exact_matches.append(item)
-                    seen.add(item["url"])
+                    seen_urls.add(item["url"])
         else:
-            fallback_query = f'site:linkedin.com/in/ "{brand}"'
+            fallback_query = f'site:theorg.com "{safe_name}"'
             fallback_results = _execute_serpapi_search(
                 fallback_query,
                 company_name=company_name,
-                num_results=20,
+                num_results=15,
                 company_match=brand,
             )
-            seen = {item["url"] for item in exact_matches}
             for item in fallback_results:
-                if isinstance(item, dict) and item.get("url") and item["url"] not in seen:
+                if isinstance(item, dict) and item.get("url") and item["url"] not in seen_urls:
                     exact_matches.append(item)
-                    seen.add(item["url"])
+                    seen_urls.add(item["url"])
         used_fallback = True
 
     return json.dumps(
         {
             "query": query,
+            "brand_query": brand_query,
             "fallback_query": fallback_query,
             "used_first_word_fallback": used_fallback,
-            "results": exact_matches[:20],
+            "results": exact_matches[:25],
         },
         ensure_ascii=False,
     )

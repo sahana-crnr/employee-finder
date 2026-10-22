@@ -19,6 +19,7 @@ from src.tools.search_tools import (
     REJECT_HEADLINE_PHRASES,
     _has_direct_company_affiliation,
     _has_rejected_company_affiliation,
+    clean_brand_name,
     is_disqualified_as_former_or_left,
 )
 
@@ -128,6 +129,61 @@ def _find_exact_linkedin_profile(
                 return url
 
     return None
+
+
+def extract_person_from_result(item: dict, company_name: str) -> tuple[str, str]:
+    """Extract person name and clean role from a verified search result title and snippet."""
+    title = item.get("title", "")
+    snippet = item.get("snippet", "")
+    clean = re.sub(r"\s*[-|]\s*linkedin.*$", "", title, flags=re.IGNORECASE).strip()
+    parts = re.split(r"\s*[-–—:]\s*", clean, maxsplit=1)
+    if not parts or not parts[0].strip():
+        return "", ""
+    name = parts[0].strip()
+    brand_clean = clean_brand_name(company_name)
+    role = ""
+    if len(parts) >= 2:
+        raw_role = parts[1].strip()
+        role = re.sub(
+            rf"\s*(?:at|@|with|for)\s+(?:{re.escape(company_name)}|{re.escape(brand_clean)}).*$",
+            "",
+            raw_role,
+            flags=re.IGNORECASE,
+        ).strip()
+        role = re.sub(
+            rf"^(?:{re.escape(company_name)}|{re.escape(brand_clean)})\b.*$",
+            "",
+            role,
+            flags=re.IGNORECASE,
+        ).strip()
+
+        # Handle multiple titles separated by | (e.g. Co-Founder | CEO or Founder | Builder)
+        if " | " in role:
+            sub_parts = [p.strip() for p in role.split(" | ") if p.strip()]
+            title_tokens = ("ceo", "cto", "cfo", "coo", "founder", "co-founder", "builder", "director", "manager", "lead", "architect", "engineer", "developer", "president")
+            kept = [p for p in sub_parts if any(t in p.lower() for t in title_tokens)]
+            if len(kept) > 1:
+                role = " & ".join(kept)
+            elif kept:
+                role = kept[0]
+            elif sub_parts:
+                role = sub_parts[0]
+
+    if not role or role.lower() in (company_name.lower(), brand_clean.lower()):
+        role_m = re.search(
+            r"\b(?:lead\s+data\s+engineer|data\s+engineer|software\s+engineer\s+ii|software\s+engineer|associate\s+engineering\s+manager|engineering\s+manager|technical\s+project\s+manager|project\s+manager|product\s+manager|technical\s+lead|solution\s+architect|cto|ceo|founder|co-founder|inside\s+sales|talent\s+acquisition|account\s+manager|sales\s+director|consultant|specialist)\b",
+            snippet,
+            re.IGNORECASE,
+        )
+        if role_m:
+            role = role_m.group(0).title()
+        else:
+            spear_m = re.search(r"\bspearhead\s+initiatives\s+in\s+([A-Za-z0-9\s,\&]+?)(?:,?\s+enabling|\.|$)", snippet, re.IGNORECASE)
+            if spear_m:
+                role = "Lead - " + spear_m.group(1).strip()
+            else:
+                role = "Team Member"
+    return name, role
 
 
 def parse_agent_json(
@@ -245,6 +301,59 @@ def parse_agent_json(
 
         seen_keys[person_key] = len(standardized)
         standardized.append(record)
+
+    # Reconciliation pass: add any verified current employees/managers from search_results omitted by LLM
+    for ev_item in (search_results or []):
+        if not isinstance(ev_item, dict):
+            continue
+        ev_title = ev_item.get("title", "")
+        ev_snippet = ev_item.get("snippet", "")
+        ev_url = ev_item.get("url", "")
+        if not ev_title or not ev_url:
+            continue
+
+        company_evidence_name = fallback_company
+        if ev_item.get("company_match") == "first-word fallback":
+            company_evidence_name = fallback_company.split()[0]
+
+        disqualified, _ = is_disqualified_as_former_or_left(
+            ev_title, ev_snippet, company_evidence_name
+        )
+        if disqualified:
+            continue
+
+        is_roster = (
+            ev_item.get("current_employment_evidence") == "official current team listing"
+            or any(d in ev_item.get("source_domain", "") or d in ev_url for d in ("theorg.com", "crunchbase.com", "builtin.com", "pitchbook.com"))
+        )
+        if not is_roster and not _has_direct_company_affiliation(
+            f"{ev_title} {ev_snippet}", company_evidence_name
+        ):
+            continue
+
+        cand_name, cand_role = extract_person_from_result(ev_item, fallback_company)
+        if not cand_name:
+            continue
+        cand_key = _normalize_person_key(cand_name)
+        if not cand_key or cand_key in seen_keys:
+            continue
+
+        cand_seniority = classify_seniority(cand_role)
+        display_profile = ev_url
+        rec = {
+            "name": cand_name,
+            "role": cand_role,
+            "seniority": cand_seniority,
+            "linkedin_url": display_profile if "/in/" in display_profile.lower() else "",
+            "profile_url": display_profile,
+            "source_domain": "linkedin.com" if "linkedin.com" in display_profile else ev_item.get("source_domain", ""),
+            "source_url": display_profile,
+            "source_snippet": ev_snippet or ev_item.get("current_employment_evidence", ""),
+            "current_employment_status": ev_item.get("current_employment_status", "Presently working"),
+            "employment_timeline": ev_item.get("employment_timeline", "Present"),
+        }
+        seen_keys[cand_key] = len(standardized)
+        standardized.append(rec)
 
     return {"company": fallback_company, "employees": standardized, "raw_output": raw_text}
 
