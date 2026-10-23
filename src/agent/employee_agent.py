@@ -260,6 +260,17 @@ def parse_agent_json(
             continue
         if not _text_contains_phrase(evidence_text, name):
             continue
+        brand_clean = clean_brand_name(fallback_company).strip().lower()
+        if not role or role.strip().lower() in (
+            fallback_company.lower(),
+            brand_clean,
+            f"{brand_clean} technologies",
+            f"{brand_clean} technologies inc",
+            f"{brand_clean} technologies inc.",
+        ):
+            _, better_role = extract_person_from_result(evidence, fallback_company)
+            if better_role and better_role.strip().lower() not in (fallback_company.lower(), brand_clean):
+                role = better_role
         if not _role_is_supported(role, evidence_text):
             continue
 
