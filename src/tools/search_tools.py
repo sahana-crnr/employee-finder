@@ -11,7 +11,7 @@ from src.config import EXCLUDED_DOMAINS, EXCLUDED_PATHS, SERPAPI_API_KEY
 
 LEADERSHIP_TERMS = (
     "ceo", "chief", "founder", "co-founder", "president", "partner",
-    "vice president", "vp", "director", "head of", "general manager",
+    "vice president", "vp", "director", "head of", "general manager", "project manager",
     "senior manager", "architect", "lead", "manager", "engineer", "developer",
     "specialist", "analyst", "consultant", "sales", "talent", "recruiter",
 )
@@ -33,12 +33,13 @@ TITLE_ROLE_WORDS = {
     "architect", "coder", "programmer", "devops", "sde", "swe", "sre", "qa", "tester", "testing", "data",
     "ai", "ml", "scientist", "analyst", "full stack", "fullstack", "frontend", "front-end", "backend",
     "back-end", "cloud", "system", "systems", "platform", "platforms", "security", "infrastructure",
-    "product", "project", "scrum", "agile", "designer", "design", "ui", "ux", "business", "sales",
-    "marketing", "operations", "account", "customer", "success", "growth", "strategy", "consultant",
-    "specialist", "associate", "coordinator", "representative", "bdr", "sdr", "talent", "acquisition",
-    "recruiter", "recruitment", "hr", "human resources", "people", "finance", "accountant", "accounting",
-    "legal", "counsel", "advisor", "intern", "student", "professional", "contributor", "freelance",
-    "freelancer", "contractor", "senior", "junior", "staff", "ii", "iii", "iv", "1", "2", "3"
+    "product", "project", "program", "technical", "scrum", "agile", "designer", "design", "ui", "ux",
+    "business", "sales", "marketing", "operations", "account", "customer", "success", "growth", "strategy",
+    "consultant", "specialist", "associate", "coordinator", "representative", "bdr", "sdr", "talent",
+    "acquisition", "recruiter", "recruitment", "hr", "human resources", "people", "finance", "accountant",
+    "accounting", "legal", "counsel", "advisor", "intern", "student", "professional", "contributor",
+    "freelance", "freelancer", "contractor", "team", "member", "senior", "junior", "staff",
+    "ii", "iii", "iv", "1", "2", "3"
 }
 
 CURRENT_MARKER_RE = re.compile(
@@ -95,7 +96,7 @@ def classify_seniority(role: str) -> str:
         return "VP / Director"
     if any(k in role_lower for k in ("founder", "co-founder", "cofounder", "president", "partner", "owner", "builder")):
         return "Founder / Executive"
-    if any(k in role_lower for k in ("manager", "management")):
+    if any(k in role_lower for k in ("manager", "team lead", "project manager", "product manager", "program manager")):
         return "Manager"
     if any(k in role_lower for k in ("lead", "architect", "principal", "staff")):
         return "Lead / Architect"
@@ -275,7 +276,7 @@ def _company_verification_search(company_name: str, query: str, source: str) -> 
             if any(word in f"{title} {snippet}".lower() for word in ("post", "reel", "stories")):
                 continue
         else:
-            if any(domain in host for domain in ("linkedin.", "instagram.", "facebook.", "x.com", "twitter.", "youtube.", "tiktok.", "glassdoor.", "ambitionbox.", "zaubacorp.", "builtin.", "naukri.", "indeed.", "quora.")):
+            if any(domain in host for domain in ("linkedin.", "instagram.", "facebook.", "x.com", "twitter.", "youtube.", "tiktok.", "glassdoor.", "ambitionbox.", "zaubacorp.", "builtin.", "naukri.", "indeed.")):
                 continue
             if any(part in host for part in ("crunchbase", "theorg", "bloomberg", "zoominfo", "pitchbook", "myworkdayjobs")):
                 continue
@@ -455,9 +456,9 @@ def search_linkedin_leadership(
     brand = clean_brand_name(safe_name).title()
     role_query = _normalize_role_filter(role_filter)
     if role_query:
-        query = f'site:linkedin.com/in/ "{safe_name}" {role_query}'
+        query = f'site:linkedin.com/in "{safe_name}" {role_query}'
     else:
-        query = f'site:linkedin.com/in/ "{safe_name}"'
+        query = f'site:linkedin.com/in "{safe_name}"'
 
     results = _execute_serpapi_search(
         query,
@@ -470,9 +471,9 @@ def search_linkedin_leadership(
     # Query 2: target employees and managers listing "at {brand}" or "at {safe_name}"
     target_brand = brand if brand and brand.lower() != safe_name.lower() else safe_name
     if role_query:
-        brand_query = f'site:linkedin.com/in/ "at {target_brand}" {role_query}'
+        brand_query = f'site:linkedin.com/in "at {target_brand}" {role_query}'
     else:
-        brand_query = f'site:linkedin.com/in/ "at {target_brand}"'
+        brand_query = f'site:linkedin.com/in "at {target_brand}"'
 
     brand_results = _execute_serpapi_search(
         brand_query,
@@ -501,11 +502,11 @@ def search_linkedin_leadership(
                     exact_matches.append(item)
                     seen_urls.add(item["url"])
         else:
-            fallback_query = f'site:theorg.com "{safe_name}"'
+            fallback_query = f'site:linkedin.com/in "{brand}"'
             fallback_results = _execute_serpapi_search(
                 fallback_query,
                 company_name=company_name,
-                num_results=15,
+                num_results=20,
                 company_match=brand,
             )
             for item in fallback_results:
