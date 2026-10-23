@@ -11,7 +11,6 @@ from src.tools.search_tools import classify_seniority, parse_company_and_domain
 
 st.set_page_config(
     page_title="Employee Finder",
-    page_icon="🔎",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -19,20 +18,143 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-        .stApp { background: #f8fafc; color: #172033; }
-        [data-testid="stHeader"] { background: rgba(248, 250, 252, .92); }
-        .block-container { max-width: 1180px; padding-top: 2.5rem; padding-bottom: 3rem; }
-        h1, h2, h3 { color: #172033; letter-spacing: -.025em; }
-        .page-intro { margin: 0 0 1.8rem; }
-        .page-intro p { color: #64748b; font-size: 1.05rem; max-width: 720px; }
-        div[data-testid="stForm"] { background: white; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.4rem; }
-        div.stButton > button, div.stDownloadButton > button {
-            border-radius: 8px; font-weight: 600; min-height: 2.7rem;
+        :root {
+            --navy-950: #0b1f3a;
+            --navy-900: #102a4c;
+            --navy-800: #173b66;
+            --navy-700: #244e7a;
+            --navy-600: #35638f;
+            --navy-500: #587ba1;
+            --navy-400: #8ba2bf;
+            --navy-300: #b7c7dc;
+            --navy-200: #d7e1ef;
+            --navy-100: #e8eef6;
+            --navy-50: #f3f6fb;
+            --page: var(--navy-50);
+            --ink: var(--navy-950);
+            --muted: var(--navy-600);
+            --lift: 7px 7px 16px #d5deea, -7px -7px 16px #fbfcfe;
+            --lift-soft: 4px 4px 10px #d9e2ed, -4px -4px 10px #fbfcfe;
         }
-        div.stButton > button[kind="primary"] { background: #3157a4; border-color: #3157a4; }
-        section[data-testid="stSidebar"] { background: #fff; border-right: 1px solid #e2e8f0; }
+        html, body, [data-testid="stAppViewContainer"] { color: var(--ink); }
+        .stApp { background: var(--page); color: var(--ink); }
+        .stApp a { color: var(--navy-700); }
+        .stApp a:hover { color: var(--navy-950); }
+        .stApp input { accent-color: var(--navy-700); }
+        [data-testid="stHeader"] { background: rgba(243, 246, 251, .9); }
+        .block-container { max-width: 1180px; padding-top: 2.5rem; padding-bottom: 3rem; }
+        h1, h2, h3 { color: var(--ink); letter-spacing: -.025em; }
+        .page-intro { margin: 0 0 1.8rem; }
+        .page-intro h1 { margin-bottom: .45rem; }
+        .page-intro p { color: var(--muted); font-size: 1.02rem; max-width: 720px; line-height: 1.6; }
+
+        /* Soft, low-contrast clay relief for the main search surface. */
+        div[data-testid="stForm"] {
+            background: linear-gradient(145deg, #f8fafd, var(--navy-100));
+            border: 1px solid #fbfcfe;
+            border-radius: 18px;
+            padding: 1.35rem 1.5rem;
+            box-shadow: var(--lift);
+        }
+        div[data-testid="stTextInput"] input,
+        div[data-testid="stPasswordInput"] input,
+        div[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+        div[data-testid="stMultiSelect"] [data-baseweb="select"] > div {
+            background: var(--navy-50);
+            border: 1px solid var(--navy-200);
+            border-radius: 10px;
+            box-shadow: inset 2px 2px 5px #dce5ef, inset -2px -2px 5px #fbfcfe;
+        }
+        div[data-testid="stMultiSelect"] [data-baseweb="tag"] {
+            color: var(--navy-900);
+            background: var(--navy-200);
+        }
+        div[data-testid="stTextInput"] input:focus,
+        div[data-testid="stPasswordInput"] input:focus {
+            border-color: var(--navy-500);
+            box-shadow: 0 0 0 3px rgba(53, 99, 143, .16), inset 1px 1px 3px #dce5ef;
+        }
+        div.stButton > button,
+        div[data-testid="stFormSubmitButton"] button,
+        div.stDownloadButton > button {
+            color: var(--navy-900);
+            border: 1px solid var(--navy-200);
+            background: linear-gradient(145deg, var(--navy-100), var(--navy-200));
+            border-radius: 10px;
+            font-weight: 600;
+            min-height: 2.7rem;
+            box-shadow: var(--lift-soft);
+            transition: transform .16s ease, box-shadow .16s ease, background .16s ease;
+        }
+        div.stButton > button:hover,
+        div[data-testid="stFormSubmitButton"] button:hover,
+        div.stDownloadButton > button:hover {
+            transform: translateY(-1px);
+            box-shadow: 5px 5px 12px #d1dce9, -5px -5px 12px #fbfcfe;
+        }
+        div.stButton > button:active,
+        div[data-testid="stFormSubmitButton"] button:active,
+        div.stDownloadButton > button:active {
+            transform: translateY(0);
+            box-shadow: inset 2px 2px 5px rgba(11, 31, 58, .18);
+        }
+        div.stButton > button[kind="primary"],
+        div[data-testid="stFormSubmitButton"] button[kind="primary"] {
+            color: #f8fafd;
+            background: linear-gradient(145deg, var(--navy-700), var(--navy-900));
+            border-color: var(--navy-800);
+            box-shadow: 4px 4px 10px #cbd7e6, -3px -3px 9px #fbfcfe;
+        }
+        div.stButton > button[kind="primary"]:hover,
+        div[data-testid="stFormSubmitButton"] button[kind="primary"]:hover {
+            background: linear-gradient(145deg, var(--navy-600), var(--navy-800));
+        }
+        div[data-testid="stFormSubmitButton"] button:focus,
+        div[data-testid="stFormSubmitButton"] button:focus-visible,
+        div.stButton > button:focus-visible,
+        div.stDownloadButton > button:focus-visible {
+            outline: 3px solid rgba(53, 99, 143, .28) !important;
+            outline-offset: 2px;
+            border-color: var(--navy-600) !important;
+            box-shadow: 0 0 0 2px var(--navy-100), var(--lift-soft) !important;
+        }
+
+        div[data-testid="stSlider"] [role="slider"] {
+            background-color: var(--navy-700) !important;
+            border-color: var(--navy-700) !important;
+        }
+        div[data-testid="stSlider"] [data-testid="stThumbValue"] {
+            color: var(--navy-800) !important;
+        }
+        div[data-testid="stSlider"] [data-baseweb="slider"] > div > div {
+            background-color: var(--navy-300);
+        }
+
+        section[data-testid="stSidebar"] {
+            background: linear-gradient(160deg, #f8fafd, var(--navy-100));
+            border-right: 1px solid var(--navy-200);
+            box-shadow: 4px 0 14px rgba(16, 42, 76, .06);
+        }
         section[data-testid="stSidebar"] h2 { font-size: 1.1rem; }
-        [data-testid="stDataFrame"] { border: 1px solid #e2e8f0; border-radius: 8px; }
+        [data-testid="stDataFrame"] {
+            border: 1px solid var(--navy-200);
+            border-radius: 12px;
+            box-shadow: var(--lift-soft);
+            overflow: hidden;
+        }
+        [data-testid="stAlert"],
+        [data-testid="stAlert"] > div,
+        [data-testid="stAlert"] [role="alert"] {
+            color: var(--navy-900);
+            background: var(--navy-100) !important;
+            border: 1px solid var(--navy-200);
+            border-radius: 12px;
+            box-shadow: var(--lift-soft);
+        }
+        [data-testid="stAlert"] * { color: var(--navy-800) !important; }
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { transition-duration: .01ms !important; }
+        }
     </style>
     """,
     unsafe_allow_html=True,
@@ -82,7 +204,6 @@ st.markdown(
     """
     <div class="page-intro">
       <h1>Employee Finder</h1>
-      <p>Verify companies through Google and Instagram, then find current executives and department leaders on LinkedIn.</p>
     </div>
     """,
     unsafe_allow_html=True,
@@ -91,7 +212,7 @@ st.markdown(
 with st.form("search_form"):
     company_input = st.text_input(
         "Company name or website",
-        placeholder="e.g. Stripe or stripe.com",
+        placeholder="e.g. Company or company.com",
         help="Enter a company name or its website URL.",
     )
     search_clicked = st.form_submit_button(
