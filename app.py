@@ -190,10 +190,13 @@ with st.sidebar:
             "openai": "OPENAI_API_KEY",
             "gemini": "GOOGLE_API_KEY",
         }[provider_key]
+        env_val = os.getenv(env_var, "")
+        if not env_val and hasattr(st, "secrets") and env_var in st.secrets:
+            env_val = str(st.secrets[env_var])
         api_key = st.text_input(
             "API key",
             type="password",
-            value=os.getenv(env_var, ""),
+            value=env_val,
             placeholder=f"Enter {env_var}",
         )
         if not api_key:

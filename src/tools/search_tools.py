@@ -255,10 +255,25 @@ def _employment_timeline(text: str) -> str:
     return re.sub(r"\s*(?:-|\u2013|\u2014|to)\s*", " - ", timeline, flags=re.IGNORECASE)
 
 
+def _get_active_serpapi_key() -> str:
+    if SERPAPI_API_KEY:
+        return SERPAPI_API_KEY
+    try:
+        import streamlit as st
+        if hasattr(st, "secrets") and "SERPAPI_API_KEY" in st.secrets:
+            return str(st.secrets["SERPAPI_API_KEY"])
+    except Exception:
+        pass
+    return ""
+
+
 def _company_verification_search(company_name: str, query: str, source: str) -> dict:
     """Return one exact-name Google or Instagram company identity match."""
+    api_key = _get_active_serpapi_key()
+    if not api_key:
+        return {"verified": False, "company": company_name, "source": source, "error": "SERPAPI_API_KEY is missing. Please add it to Streamlit Secrets or .env file."}
     try:
-        response = GoogleSearch({"engine": "google", "q": query, "api_key": SERPAPI_API_KEY, "num": 8}).get_dict()
+        response = GoogleSearch({"engine": "google", "q": query, "api_key": api_key, "num": 8}).get_dict()
     except Exception as error:
         return {"verified": False, "company": company_name, "source": source, "error": f"{source} verification failed: {error}"}
     if response.get("error"):
@@ -324,12 +339,15 @@ def _execute_serpapi_search(
     company_match: Optional[str] = None,
 ) -> list[dict]:
     """Make one SerpApi request and retain only exact-company, current leadership evidence."""
+    api_key = _get_active_serpapi_key()
+    if not api_key:
+        return [{"error": "SERPAPI_API_KEY is missing. Please add it to Streamlit Secrets or .env file."}]
     try:
         response = GoogleSearch(
             {
                 "engine": "google",
                 "q": query,
-                "api_key": SERPAPI_API_KEY,
+                "api_key": api_key,
                 "num": num_results,
             }
         ).get_dict()
