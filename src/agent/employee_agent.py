@@ -12,7 +12,6 @@ from src.tools import (
     parse_company_and_domain,
     search_linkedin_leadership,
     verify_company_google,
-    verify_company_instagram,
 )
 from src.tools.search_tools import (
     NEGATIVE_AFFILIATION_PHRASES,
@@ -374,27 +373,19 @@ def run_agent_stream(
     role_preference: Optional[str] = None,
     agent_instance=None,
 ) -> Generator[dict[str, Any], None, None]:
-    """Verify the company with Google and Instagram, then search LinkedIn for current leaders."""
+    """Verify the company with Google, then search LinkedIn for current leaders."""
     company_name, domain = parse_company_and_domain(company_or_url)
     active_agent = agent_instance or agent
-    verifications = []
-    for tool_name, verify_tool in (
-        ("verify_company_google", verify_company_google),
-        ("verify_company_instagram", verify_company_instagram),
-    ):
-        yield {"type": "action", "tool": tool_name, "args": {"company": company_name}}
-        try:
-            verification = json.loads(verify_tool.invoke({"company_or_url": company_or_url}))
-        except Exception as error:
-            verification = {"verified": False, "source": tool_name, "error": f"Verification failed: {error}"}
-        verifications.append(verification)
-        yield {"type": "observation", "tool": tool_name}
-        if verification.get("verified"):
-            break
 
-    verified = next((item for item in verifications if item.get("verified")), None)
-    if not verified:
-        verification_errors = "; ".join(item.get("error", "") for item in verifications if item.get("error"))
+    yield {"type": "action", "tool": "verify_company_google", "args": {"company": company_name}}
+    try:
+        verification = json.loads(verify_company_google.invoke({"company_or_url": company_or_url}))
+    except Exception as error:
+        verification = {"verified": False, "source": "Google", "error": f"Verification failed: {error}"}
+    yield {"type": "observation", "tool": "verify_company_google"}
+
+    if not verification.get("verified"):
+        verification_error = verification.get("error", "")
         yield {
             "type": "result",
             "data": {
@@ -402,11 +393,13 @@ def run_agent_stream(
                 "company_verified": False,
                 "company_page_url": "",
                 "employees": [],
-                "raw_output": verification_errors or "Google and Instagram did not confirm an exact-name company presence.",
+                "raw_output": verification_error or "Google did not confirm an exact-name company presence.",
             },
             "raw": "",
         }
         return
+
+    verified = verification
 
     # Extract official company domain from verification or input
     discovered_domain = domain

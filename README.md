@@ -7,7 +7,7 @@ An employee research app built with **LangChain** and **SerpApi**. It searches f
 - **Leadership focus:** Targets executives, founders, vice presidents, directors, department heads, and senior managers.
 - **Current employment checks:** Excludes former employees and job seekers; profiles need current-status evidence.
 - **Company matching:** Tries the complete name first. If LinkedIn has no qualifying profile results, retries with the first company-name word and still requires a direct current role match.
-- **Company verification and member search:** Uses Google results and Instagram company profiles only to verify the company. After verification, searches LinkedIn profiles for current leaders; Google and Instagram are not used to find members. The language model only extracts details from returned LinkedIn evidence.
+- **Company verification and member search:** Uses Google results only to verify the company. After verification, searches LinkedIn profiles for current leaders. The language model only extracts details from returned LinkedIn evidence.
 - **Source links:** Results include the supporting source and current-employment snippet.
 
 ---

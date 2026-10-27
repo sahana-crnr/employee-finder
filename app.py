@@ -260,8 +260,6 @@ if search_clicked:
                 if event["type"] == "action":
                     if event["tool"] == "verify_company_google":
                         progress.info("Verifying the company through Google…")
-                    elif event["tool"] == "verify_company_instagram":
-                        progress.info("Checking Instagram for an official company profile…")
                     else:
                         progress.info("Company verification complete. Searching LinkedIn for current leaders…")
                 elif event["type"] == "result":
@@ -284,7 +282,7 @@ if st.session_state.get("result_version") == 7 and st.session_state.get("last_re
     st.subheader(f"Results for {company_name}")
 
     if not result_data.get("company_verified"):
-        st.warning("Could not confirm this exact company through Google or an Instagram company profile, so no member search was run. Check the company spelling.")
+        st.warning("Could not confirm this exact company through Google, so no member search was run. Check the company spelling.")
         if result_data.get("raw_output"):
             st.caption(result_data["raw_output"])
     elif not employees:

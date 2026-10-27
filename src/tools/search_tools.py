@@ -96,7 +96,7 @@ def classify_seniority(role: str) -> str:
         return "VP / Director"
     if any(k in role_lower for k in ("founder", "co-founder", "cofounder", "president", "partner", "owner", "builder")):
         return "Founder / Executive"
-    if any(k in role_lower for k in ("manager", "team lead", "project manager", "product manager", "program manager")):
+    if any(k in role_lower for k in ("manager", "project manager", "product manager", "program manager")):
         return "Manager"
     if any(k in role_lower for k in ("lead", "architect", "principal", "staff")):
         return "Lead / Architect"
@@ -268,7 +268,9 @@ def _get_active_serpapi_key() -> str:
 
 
 def _company_verification_search(company_name: str, query: str, source: str) -> dict:
-    """Return one exact-name Google or Instagram company identity match."""
+
+    """Return one exact-name Google company identity match."""
+
     api_key = _get_active_serpapi_key()
     if not api_key:
         return {"verified": False, "company": company_name, "source": source, "error": "SERPAPI_API_KEY is missing. Please add it to Streamlit Secrets or .env file."}
@@ -285,16 +287,10 @@ def _company_verification_search(company_name: str, query: str, source: str) -> 
         title, snippet = item.get("title", ""), item.get("snippet", "")
         if not _contains_full_company_name(f"{title} {snippet}", company_name):
             continue
-        if source == "Instagram":
-            if not (host == "instagram.com" or host.endswith(".instagram.com")) or len([p for p in parsed.path.split("/") if p]) != 1:
-                continue
-            if any(word in f"{title} {snippet}".lower() for word in ("post", "reel", "stories")):
-                continue
-        else:
-            if any(domain in host for domain in ("linkedin.", "instagram.", "facebook.", "x.com", "twitter.", "youtube.", "tiktok.", "glassdoor.", "ambitionbox.", "zaubacorp.", "builtin.", "naukri.", "indeed.")):
-                continue
-            if any(part in host for part in ("crunchbase", "theorg", "bloomberg", "zoominfo", "pitchbook", "myworkdayjobs")):
-                continue
+        if any(domain in host for domain in ("linkedin.", "instagram.", "facebook.", "x.com", "twitter.", "youtube.", "tiktok.", "glassdoor.", "ambitionbox.", "zaubacorp.", "builtin.", "naukri.", "indeed.")):
+            continue
+        if any(part in host for part in ("crunchbase", "theorg", "bloomberg", "zoominfo", "pitchbook", "myworkdayjobs")):
+            continue
         return {"verified": True, "company": company_name, "company_url": url, "title": title, "snippet": snippet, "source": source, "query": query}
     return {"verified": False, "company": company_name, "source": source, "query": query, "error": f"No exact-name {source} company result was found."}
 
@@ -307,16 +303,6 @@ def verify_company_google(company_or_url: str) -> str:
         return json.dumps({"verified": False, "company": "", "error": "A company name is required."})
     query = f'"{company_name.replace(chr(34), " ").strip()}" company official website'
     return json.dumps(_company_verification_search(company_name, query, "Google"), ensure_ascii=False)
-
-
-@tool
-def verify_company_instagram(company_or_url: str) -> str:
-    """Verify company identity from an exact-name Instagram profile only."""
-    company_name, _ = parse_company_and_domain(company_or_url)
-    if not company_name:
-        return json.dumps({"verified": False, "company": "", "error": "A company name is required."})
-    query = f'site:instagram.com "{company_name.replace(chr(34), " ").strip()}" company'
-    return json.dumps(_company_verification_search(company_name, query, "Instagram"), ensure_ascii=False)
 
 
 verify_company_linkedin = verify_company_google
@@ -335,9 +321,9 @@ def _execute_serpapi_search(
     num_results: int = 10,
     allowed_domain: Optional[str] = None,
     allow_general_web: bool = False,
-    instagram_only: bool = False,
     company_match: Optional[str] = None,
 ) -> list[dict]:
+
     """Make one SerpApi request and retain only exact-company, current leadership evidence."""
     api_key = _get_active_serpapi_key()
     if not api_key:
@@ -366,7 +352,6 @@ def _execute_serpapi_search(
             continue
         parsed = urlparse(url)
         host = (parsed.hostname or "").lower().removeprefix("www.")
-        is_instagram = host == "instagram.com" or host.endswith(".instagram.com")
         title = item.get("title", "")
         snippet = item.get("snippet", "")
         evidence_text = f"{title} {snippet}"
@@ -374,10 +359,7 @@ def _execute_serpapi_search(
 
         if any(phrase in lower_evidence for phrase in REJECT_HEADLINE_PHRASES):
             continue
-        if any(
-            domain in host and not (is_instagram and domain == "instagram.com")
-            for domain in EXCLUDED_DOMAINS
-        ):
+        if any(domain in host for domain in EXCLUDED_DOMAINS):
             continue
         if any(path in parsed.path.lower() for path in EXCLUDED_PATHS):
             continue
@@ -390,16 +372,9 @@ def _execute_serpapi_search(
             host == d or host.endswith(f".{d}")
             for d in ("theorg.com", "crunchbase.com", "builtin.com", "pitchbook.com")
         )
-        if instagram_only and not is_instagram:
-            continue
         if not (is_linkedin or is_company_site or is_directory or allow_general_web):
             continue
         if is_linkedin and not any(part in parsed.path.lower() for part in ("/in/", "/posts/", "/company/")):
-            continue
-        if is_instagram and any(
-            segment in parsed.path.lower().split("/")
-            for segment in ("p", "reel", "reels", "stories", "explore")
-        ):
             continue
 
         # Match the complete supplied company phrase, not a partial company-name token.
@@ -461,7 +436,9 @@ def search_linkedin_leadership(
     role_filter: Optional[Any] = None,
     domain: Optional[str] = None,
 ) -> str:
+
     """Search LinkedIn profiles and verified company sources for current team members and leaders."""
+
     target = company or company_or_url or ""
     company_name, parsed_domain = parse_company_and_domain(target)
     active_domain = domain or parsed_domain
@@ -512,7 +489,7 @@ def search_linkedin_leadership(
             exec_results = _execute_serpapi_search(
                 fallback_query,
                 company_name=company_name,
-                num_results=15,
+                num_results=30,
                 company_match=brand,
             )
             for item in exec_results:
@@ -524,7 +501,7 @@ def search_linkedin_leadership(
             fallback_results = _execute_serpapi_search(
                 fallback_query,
                 company_name=company_name,
-                num_results=20,
+                num_results=30,
                 company_match=brand,
             )
             for item in fallback_results:
@@ -583,7 +560,6 @@ def find_member_linkedin(
 
 # Compatibility aliases
 search_google_leadership = search_linkedin_leadership
-search_instagram_leadership = verify_company_instagram
 search_leadership_sources = search_linkedin_leadership
 search_directories_and_linkedin = search_linkedin_leadership
 search_company_employees = search_linkedin_leadership
