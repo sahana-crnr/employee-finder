@@ -374,7 +374,9 @@ def _execute_serpapi_search(
         )
         if not (is_linkedin or is_company_site or is_directory or allow_general_web):
             continue
-        if is_linkedin and not any(part in parsed.path.lower() for part in ("/in/", "/posts/", "/company/")):
+        if is_linkedin and "/in/" not in parsed.path.lower():
+            continue
+        if "'s post" in title.lower() or "post |" in title.lower() or "activity |" in title.lower():
             continue
 
         # Match the complete supplied company phrase, not a partial company-name token.
@@ -442,14 +444,23 @@ def search_linkedin_leadership(
     target = company or company_or_url or ""
     company_name, parsed_domain = parse_company_and_domain(target)
     active_domain = domain or parsed_domain
-    if active_domain and any(ex in active_domain.lower() for ex in ("linkedin", "instagram", "facebook", "twitter", "glassdoor", "naukri", "theorg", "crunchbase")):
+    directory_domains = (
+        "linkedin", "instagram", "facebook", "twitter", "glassdoor",
+        "naukri", "theorg", "crunchbase", "enosis", "clutch", "hirist",
+        "ambitionbox", "zaubacorp", "builtin", "indeed", "squarespace",
+        "yourstory", "bebee", "uplers", "growjo", "zoominfo"
+    )
+    if active_domain and any(ex in active_domain.lower() for ex in directory_domains):
         active_domain = None
     if not company_name:
         return json.dumps({"error": "A company name or domain is required.", "results": []})
 
     safe_name = company_name.replace('"', " ").strip().title()
     brand = clean_brand_name(safe_name).title()
+    target_brand = brand if brand and brand.lower() != safe_name.lower() else safe_name
     role_query = _normalize_role_filter(role_filter)
+
+    # 1. Exact Company Name Query
     if role_query:
         query = f'site:linkedin.com/in "{safe_name}" {role_query}'
     else:
@@ -463,60 +474,60 @@ def search_linkedin_leadership(
     exact_matches = [item for item in results if isinstance(item, dict) and item.get("url")]
     seen_urls = {item["url"] for item in exact_matches}
 
-    # Query 2: target employees and managers listing "at {brand}" or "at {safe_name}"
-    target_brand = brand if brand and brand.lower() != safe_name.lower() else safe_name
+    # 2. Executive & Leadership Query (Founders, C-Suite, VPs, Directors)
+    leadership_query = f'site:linkedin.com/in "{target_brand}" (CEO OR Founder OR CTO OR President OR VP OR Director OR "Head of" OR Partner)'
     if role_query:
-        brand_query = f'site:linkedin.com/in "at {target_brand}" {role_query}'
-    else:
-        brand_query = f'site:linkedin.com/in "at {target_brand}"'
-
-    brand_results = _execute_serpapi_search(
-        brand_query,
+        leadership_query += f" {role_query}"
+    leader_results = _execute_serpapi_search(
+        leadership_query,
         company_name=company_name,
         num_results=20,
         company_match=target_brand,
     )
-    for item in brand_results:
+    for item in leader_results:
         if isinstance(item, dict) and item.get("url") and item["url"] not in seen_urls:
             exact_matches.append(item)
             seen_urls.add(item["url"])
 
+    # 3. Engineering, Management & Staff Query (Managers, Leads, Engineers, Architects)
+    team_query = f'site:linkedin.com/in "{target_brand}" (Manager OR Lead OR Architect OR Engineer OR Developer OR Specialist OR Sales OR Talent)'
+    if role_query:
+        team_query += f" {role_query}"
+    team_results = _execute_serpapi_search(
+        team_query,
+        company_name=company_name,
+        num_results=20,
+        company_match=target_brand,
+    )
+    for item in team_results:
+        if isinstance(item, dict) and item.get("url") and item["url"] not in seen_urls:
+            exact_matches.append(item)
+            seen_urls.add(item["url"])
+
+    # 4. Fallback to TheOrg Org Chart or Official Company Site if roster still under 6
     used_fallback = False
     fallback_query = ""
-    if len(exact_matches) < 4:
-        if active_domain:
-            fallback_query = f'"{brand}" "{active_domain}" (CEO OR Founder OR Manager OR Architect OR Engineer)'
-            exec_results = _execute_serpapi_search(
-                fallback_query,
-                company_name=company_name,
-                num_results=30,
-                company_match=brand,
-            )
-            for item in exec_results:
-                if isinstance(item, dict) and item.get("url") and item["url"] not in seen_urls:
-                    exact_matches.append(item)
-                    seen_urls.add(item["url"])
-        else:
-            fallback_query = f'site:linkedin.com/in "{brand}"'
-            fallback_results = _execute_serpapi_search(
-                fallback_query,
-                company_name=company_name,
-                num_results=30,
-                company_match=brand,
-            )
-            for item in fallback_results:
-                if isinstance(item, dict) and item.get("url") and item["url"] not in seen_urls:
-                    exact_matches.append(item)
-                    seen_urls.add(item["url"])
+    if len(exact_matches) < 6:
+        fallback_query = f'site:theorg.com "{safe_name}"'
+        fallback_results = _execute_serpapi_search(
+            fallback_query,
+            company_name=company_name,
+            num_results=15,
+            company_match=brand,
+        )
+        for item in fallback_results:
+            if isinstance(item, dict) and item.get("url") and item["url"] not in seen_urls:
+                exact_matches.append(item)
+                seen_urls.add(item["url"])
         used_fallback = True
 
     return json.dumps(
         {
             "query": query,
-            "brand_query": brand_query,
+            "brand_query": leadership_query,
             "fallback_query": fallback_query,
             "used_first_word_fallback": used_fallback,
-            "results": exact_matches[:25],
+            "results": exact_matches[:30],
         },
         ensure_ascii=False,
     )

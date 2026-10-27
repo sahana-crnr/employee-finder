@@ -134,12 +134,30 @@ def extract_person_from_result(item: dict, company_name: str) -> tuple[str, str]
     """Extract person name and clean role from a verified search result title and snippet."""
     title = item.get("title", "")
     snippet = item.get("snippet", "")
+    url = item.get("url", "")
+
+    # Reject non-profile pages like posts, articles, job listings, and company overviews
+    title_lower = title.lower()
+    if any(p in title_lower for p in ("'s post", "post |", "activity |", "overview", "jobs", "careers", "apply now", "hiring", "reviews")):
+        return "", ""
+    if "/posts/" in url.lower() or "/company/" in url.lower():
+        return "", ""
+
     clean = re.sub(r"\s*[-|]\s*linkedin.*$", "", title, flags=re.IGNORECASE).strip()
     parts = re.split(r"\s*[-–—:]\s*", clean, maxsplit=1)
     if not parts or not parts[0].strip():
         return "", ""
     name = parts[0].strip()
     brand_clean = clean_brand_name(company_name)
+
+    name_lower = name.lower()
+    if (
+        name_lower == company_name.lower()
+        or name_lower == brand_clean.lower()
+        or any(w in name_lower for w in ("associated companies", "overview", "jobs", "careers", "apply now", "hiring", "reviews", "technologies inc"))
+    ):
+        return "", ""
+
     role = ""
     if len(parts) >= 2:
         raw_role = parts[1].strip()
@@ -169,19 +187,34 @@ def extract_person_from_result(item: dict, company_name: str) -> tuple[str, str]
                 role = sub_parts[0]
 
     if not role or role.lower() in (company_name.lower(), brand_clean.lower()):
-        role_m = re.search(
-            r"\b(?:lead\s+data\s+engineer|data\s+engineer|software\s+engineer\s+ii|software\s+engineer|associate\s+engineering\s+manager|engineering\s+manager|technical\s+project\s+manager|project\s+manager|product\s+manager|technical\s+lead|solution\s+architect|cto|ceo|founder|co-founder|inside\s+sales|talent\s+acquisition|account\s+manager|sales\s+director|consultant|specialist)\b",
+        # First inspect snippet for explicit Founder, CEO, CTO, and C-Suite leadership roles
+        exec_m = re.search(
+            r"\b(?:currently\s+the\s+)?(co-founder\s*(?:and|&)\s*ceo|founder\s*(?:and|&)\s*ceo|co-founder\s*[,/|]\s*ceo|founder\s*[,/|]\s*ceo|co-founder|founder|chief\s+executive\s+officer|ceo|chief\s+technology\s+officer|cto|cfo|coo|president|partner|vice\s+president|vp|director|head\s+of\s+[A-Za-z\s]+)\b",
             snippet,
             re.IGNORECASE,
         )
-        if role_m:
-            role = role_m.group(0).title()
+        if exec_m:
+            matched_title = exec_m.group(1).title()
+            # Standardize common executive acronyms
+            role = re.sub(r"\bCeo\b", "CEO", matched_title)
+            role = re.sub(r"\bCto\b", "CTO", role)
+            role = re.sub(r"\bCfo\b", "CFO", role)
+            role = re.sub(r"\bCoo\b", "COO", role)
+            role = re.sub(r"\bVp\b", "VP", role)
         else:
-            spear_m = re.search(r"\bspearhead\s+initiatives\s+in\s+([A-Za-z0-9\s,\&]+?)(?:,?\s+enabling|\.|$)", snippet, re.IGNORECASE)
-            if spear_m:
-                role = "Lead - " + spear_m.group(1).strip()
+            role_m = re.search(
+                r"\b(?:lead\s+data\s+engineer|data\s+engineer|software\s+engineer\s+ii|software\s+engineer|associate\s+engineering\s+manager|engineering\s+manager|technical\s+project\s+manager|project\s+manager|product\s+manager|technical\s+lead|solution\s+architect|inside\s+sales|talent\s+acquisition|account\s+manager|sales\s+director|consultant|specialist)\b",
+                snippet,
+                re.IGNORECASE,
+            )
+            if role_m:
+                role = role_m.group(0).title()
             else:
-                role = "Team Member"
+                spear_m = re.search(r"\bspearhead\s+initiatives\s+in\s+([A-Za-z0-9\s,\&]+?)(?:,?\s+enabling|\.|$)", snippet, re.IGNORECASE)
+                if spear_m:
+                    role = "Lead - " + spear_m.group(1).strip()
+                else:
+                    role = "Team Member"
     return name, role
 
 
